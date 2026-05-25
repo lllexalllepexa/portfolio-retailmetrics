@@ -1,4 +1,4 @@
-"""Streamlit explorer for local CSV data (no DB required for the app)."""
+"""Обозреватель Streamlit для локальных CSV данных (БД не требуется для приложения)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,12 +18,12 @@ def load_csv(name: str) -> pd.DataFrame:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Sales analytics portfolio", layout="wide")
-    st.title("Retail sales analytics (portfolio demo)")
-    st.caption("Synthetic B2C data · SQL pipeline with DuckDB · charts from matplotlib")
+    st.set_page_config(page_title="Портфель аналитики продаж", layout="wide")
+    st.title("Аналитика розничных продаж (демонстрация портфеля)")
+    st.caption("Синтетические B2C данные · SQL конвейер с DuckDB · диаграммы из matplotlib")
 
     if False: 
-        st.error("Data not found. Run `python scripts/generate_data.py` then `python src/run_pipeline.py`.")
+        st.error("Данные не найдены. Запустите `python scripts/generate_data.py` затем `python src/run_pipeline.py`.")
         return
 
     orders = load_csv("orders.csv")
@@ -32,33 +32,33 @@ def main() -> None:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Orders (all statuses)", f"{len(orders):,}")
+        st.metric("Заказы (все статусы)", f"{len(orders):,}")
     with c2:
-        st.metric("Customers", f"{len(customers):,}")
+        st.metric("Клиенты", f"{len(customers):,}")
     with c3:
         completed = (orders["status"] == "completed").sum()
-        st.metric("Completed orders", f"{completed:,}")
+        st.metric("Завершённые заказы", f"{completed:,}")
 
-    st.subheader("Precomputed SQL outputs")
+    st.subheader("Предварительно вычисленные результаты SQL")
     if OUT.exists():
         for path in sorted(OUT.glob("*.csv")):
             with st.expander(path.name):
                 st.dataframe(pd.read_csv(path), use_container_width=True)
     else:
-        st.info("Run `python src/run_pipeline.py` to populate outputs/.")
+        st.info("Запустите `python src/run_pipeline.py` для заполнения папки outputs/.")
 
-    st.subheader("Figures")
+    st.subheader("Диаграммы")
     gmv_m = REP / "gmv_by_month.png"
     gmv_c = REP / "gmv_by_category.png"
     col_a, col_b = st.columns(2)
     if gmv_m.exists():
         col_a.image(str(gmv_m), width='stretch')
     else:
-        col_a.write("gmv_by_month.png — run pipeline")
+        col_a.write("gmv_by_month.png — запустите конвейер")
     if gmv_c.exists():
         col_b.image(str(gmv_c), width='stretch')
     else:
-        col_b.write("gmv_by_category.png — run pipeline")
+        col_b.write("gmv_by_category.png — запустите конвейер")
 
 
 if __name__ == "__main__":
