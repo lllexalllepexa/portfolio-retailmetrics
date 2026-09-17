@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.plot_cohort_heatmap import render_cohort_heatmap
+
 DATA = ROOT / "data"
 SQL = ROOT / "sql"
 OUT = ROOT / "outputs"
@@ -72,6 +76,10 @@ def main() -> int:
         fig.tight_layout()
         fig.savefig(REP / "gmv_by_category.png", dpi=150)
         plt.close(fig)
+
+    cohort = results.get("05_cohort_retention")
+    if cohort is not None and not cohort.empty:
+        render_cohort_heatmap(cohort, REP / "cohort_retention_heatmap.png")
 
     print(f"Wrote {len(results)} result tables -> {OUT}")
     print(f"Wrote charts -> {REP}")
