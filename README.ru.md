@@ -129,10 +129,21 @@ portfolio-retailmetrics-audit/
 
 ## 📐 Методология расчета ключевых метрик
 
-- **GMV (Gross Merchandise Value)**: $\sum (\text{quantity} - \text{quantity\_returned}) \times \text{unit\_price\_paid}$ для строк со статусом `completed` или `returned`. Заказы со статусом `cancelled` исключаются.
-- **AOV (Average Order Value)**: Отношение суммарного GMV к общему числу уникальных оплаченных заказов в соответствующем сегменте.
-- **Когорта (Cohort Month)**: Календарный месяц регистрации клиента (`signup_date`).
-- **Retention Rate**: Доля клиентов когорты, совершивших хотя бы один квалифицирующий заказ в месяц `signup_month + n` (где $n \in [0, 3]$).
+- **GMV (Gross Merchandise Value)**:
+  $$\text{GMV} = \sum (\text{Quantity} - \text{Returned Quantity}) \times \text{Unit Price}$$
+  *Расчет в SQL:* `sum((quantity - quantity_returned) * unit_price_paid)` для строк со статусом `completed` или `returned`. Заказы со статусом `cancelled` исключаются.
+
+- **AOV (Average Order Value)**:
+  $$\text{AOV} = \frac{\text{Total GMV}}{\text{Distinct Orders}}$$
+  Отношение суммарного GMV к общему числу уникальных оплаченных заказов в соответствующем сегменте.
+
+- **Когорта (Cohort Month)**:
+  $$\text{Cohort Month} = \text{DateTrunc}(\text{'month'}, \text{Signup Date})$$
+  Календарный месяц регистрации клиента (`signup_date`).
+
+- **Retention Rate**:
+  $$\text{Retention Rate}_{c, n} = \frac{\text{Active Customers}_{c, n}}{\text{Cohort Customers}_c}$$
+  Доля клиентов когорты $c$, совершивших хотя бы один квалифицирующий заказ в месяц со смещением $n \in [0, 3]$.
 
 ---
 

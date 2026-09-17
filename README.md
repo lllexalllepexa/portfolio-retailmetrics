@@ -139,18 +139,18 @@ All queries are written in standard ANSI SQL optimized for DuckDB execution:
 ## 📐 Business Metric Definitions & Logic
 
 - **Gross Merchandise Value (GMV)**:
-  $$\text{GMV} = \sum (\text{quantity} - \text{quantity\_returned}) \times \text{unit\_price\_paid}$$
-  *Calculated only across orders with status `completed` or `returned`. Orders flagged as `cancelled` are strictly excluded. Partial item returns are deducted from line-level totals.*
+  $$\text{GMV} = \sum (\text{Quantity} - \text{Returned Quantity}) \times \text{Unit Price}$$
+  *SQL logic:* `sum((quantity - quantity_returned) * unit_price_paid)`. Calculated only across orders with status `completed` or `returned`. Orders flagged as `cancelled` are strictly excluded. Partial item returns are deducted from line-level totals.
 
 - **Average Order Value (AOV)**:
-  $$\text{AOV} = \frac{\text{Total GMV}}{\text{Distinct Qualifying Orders Count}}$$
+  $$\text{AOV} = \frac{\text{Total GMV}}{\text{Distinct Qualifying Orders}}$$
 
 - **Cohort Month**:
-  $$\text{Cohort Month} = \text{date\_trunc}('month', \text{customer signup date})$$
+  $$\text{Cohort Month} = \text{DateTrunc}(\text{'month'}, \text{Signup Date})$$
 
 - **Retention Rate**:
-  $$\text{Retention Rate}_{c, n} = \frac{\text{Unique Customers in Cohort } c \text{ with } \ge 1 \text{ Qualifying Order in Month } (c + n)}{\text{Total Qualifying Customers in Cohort } c}$$
-  *(Evaluated across calendar month offsets $n \in [0, 3]$).*
+  $$\text{Retention Rate}_{c, n} = \frac{\text{Active Customers}_{c, n}}{\text{Total Customers}_c}$$
+  *Where $c$ represents the acquisition cohort and $n \in [0, 3]$ represents the calendar month offset.*
 
 ---
 
