@@ -1,12 +1,12 @@
--- Monthly gross merchandise value (GMV) from fulfilled lines (excludes cancelled orders).
--- Net quantity accounts for partial returns on returned orders.
+-- Monthly gross and net revenue for qualifying (completed + returned) orders.
+-- order_count includes fully returned orders, which contribute 0 net revenue.
 
 SELECT
-    strftime('%Y-%m', o.order_date) AS order_month,
-    round(sum((oi.quantity - oi.quantity_returned) * oi.unit_price_paid), 2) AS gmv_usd,
-    count(DISTINCT o.order_id) AS order_count
-FROM order_items AS oi
-JOIN orders AS o ON oi.order_id = o.order_id
-WHERE o.status IN ('completed', 'returned')
+    strftime(order_date, '%Y-%m')                                       AS order_month,
+    round(sum(gross_revenue), 2)                                        AS gross_revenue_usd,
+    round(sum(net_revenue), 2)                                          AS net_revenue_usd,
+    round(sum(returned_revenue) / nullif(sum(gross_revenue), 0), 4)     AS return_rate,
+    count(DISTINCT order_id)                                            AS order_count
+FROM fct_order_lines
 GROUP BY 1
 ORDER BY 1;

@@ -1,117 +1,212 @@
-"""Обозреватель Streamlit для локальных CSV данных (БД не требуется для приложения)."""
+"""Interactive retail metrics dashboard backed by the DuckDB warehouse built by the pipeline."""
+
 from __future__ import annotations
 
-from pathlib import Path
+from datetime import date
 
+import duckdb
 import pandas as pd
 import streamlit as st
 
-ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data"
-OUT = ROOT / "outputs"
-REP = ROOT / "reports"
+from retailmetrics import config
+from retailmetrics.pipeline import build_warehouse_file
+
+FILTERS = """
+    list_contains($countries, country)
+    AND list_contains($categories, category)
+    AND order_date BETWEEN $start AND $end
+"""
+
+
+@st.cache_resource
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """Open the warehouse read-only, building it from data/ first if it does not exist yet."""
+    if not config.WAREHOUSE_PATH.exists():
+        build_warehouse_file()
+    return duckdb.connect(str(config.WAREHOUSE_PATH), read_only=True)
+
+
+def query(sql: str, params: dict | None = None) -> pd.DataFrame:
+    # A cursor per query: one shared DuckDB connection is not safe across Streamlit threads.
+    return get_connection().cursor().execute(sql, params or {}).df()
 
 
 @st.cache_data
-def load_csv(name: str) -> pd.DataFrame:
-    """Load a CSV file from data/ directory."""
-    path = DATA / name
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
+def filter_options() -> tuple[list[str], list[str], date, date]:
+    dims = query(
+        """
+        SELECT
+            (SELECT list(DISTINCT country ORDER BY country) FROM fct_order_lines)   AS countries,
+            (SELECT list(DISTINCT category ORDER BY category) FROM fct_order_lines) AS categories,
+            (SELECT min(order_date) FROM fct_order_lines)                          AS first_day,
+            (SELECT max(order_date) FROM fct_order_lines)                          AS last_day
+        """
+    ).iloc[0]
+    return list(dims.countries), list(dims.categories), dims.first_day.date(), dims.last_day.date()
 
 
-def compute_total_gmv(orders: pd.DataFrame, items: pd.DataFrame) -> float:
-    """Compute Total GMV from outputs/01_revenue_by_month.csv or calculate from order_items."""
-    rbm_file = OUT / "01_revenue_by_month.csv"
-    if rbm_file.exists():
-        try:
-            rbm_df = pd.read_csv(rbm_file)
-            if "gmv_usd" in rbm_df.columns and not rbm_df["gmv_usd"].empty:
-                return float(rbm_df["gmv_usd"].sum())
-        except Exception:
-            pass
+@st.cache_data
+def filtered(sql: str, countries: tuple[str, ...], categories: tuple[str, ...], start: date, end: date) -> pd.DataFrame:
+    params = {"countries": list(countries), "categories": list(categories), "start": start, "end": end}
+    return query(sql.format(filters=FILTERS), params)
 
-    if not items.empty and not orders.empty and "status" in orders.columns:
-        valid_orders = orders[orders["status"].isin(["completed", "returned"])]
-        if "order_id" in valid_orders.columns and "order_id" in items.columns:
-            merged = items.merge(valid_orders[["order_id"]], on="order_id")
-            if {"quantity", "quantity_returned", "unit_price_paid"}.issubset(merged.columns):
-                return float(
-                    ((merged["quantity"] - merged["quantity_returned"]) * merged["unit_price_paid"]).sum()
-                )
 
-    return 0.0
+def render_sidebar() -> tuple[tuple[str, ...], tuple[str, ...], date, date]:
+    countries, categories, first_day, last_day = filter_options()
+    st.sidebar.header("Filters")
+    sel_countries = st.sidebar.multiselect("Country", countries, default=countries)
+    sel_categories = st.sidebar.multiselect("Category", categories, default=categories)
+    picked = st.sidebar.date_input("Order date", (first_day, last_day), min_value=first_day, max_value=last_day)
+    start, end = picked if isinstance(picked, tuple) and len(picked) == 2 else (first_day, last_day)
+    st.sidebar.caption("Filters apply to every section except cohort retention (whole-customer metric).")
+    return tuple(sel_countries), tuple(sel_categories), start, end
+
+
+def render_kpis(selection: tuple) -> None:
+    kpi = filtered(
+        """
+        SELECT
+            sum(net_revenue)                                   AS net_revenue,
+            sum(gross_revenue)                                 AS gross_revenue,
+            sum(returned_revenue) / nullif(sum(gross_revenue), 0) AS return_rate,
+            count(DISTINCT order_id)                           AS orders,
+            count(DISTINCT customer_id)                        AS customers
+        FROM fct_order_lines
+        WHERE {filters}
+        """,
+        *selection,
+    ).to_dict("records")[0]  # records keep per-column dtypes; .iloc[0] would upcast ints to float
+    if not kpi["orders"]:
+        st.info("No qualifying orders match the current filters.")
+        st.stop()
+    aov = kpi["net_revenue"] / kpi["orders"]
+    cols = st.columns(5)
+    cols[0].metric("Net revenue", f"${kpi['net_revenue']:,.0f}")
+    cols[1].metric("Gross revenue", f"${kpi['gross_revenue']:,.0f}")
+    cols[2].metric("Return rate", f"{kpi['return_rate']:.1%}")
+    cols[3].metric("Orders", f"{kpi['orders']:,}", help="Completed + returned orders; cancelled orders are excluded.")
+    cols[4].metric("Net revenue per order", f"${aov:,.2f}", help="Net revenue / orders in the current selection.")
+    st.caption(f"{kpi['customers']:,} purchasing customers in selection")
+
+
+def render_trends(selection: tuple) -> None:
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Revenue by month")
+        monthly = filtered(
+            """
+            SELECT strftime(order_date, '%Y-%m') AS month,
+                   sum(gross_revenue) AS "Gross revenue",
+                   sum(net_revenue)   AS "Net revenue"
+            FROM fct_order_lines WHERE {filters}
+            GROUP BY 1 ORDER BY 1
+            """,
+            *selection,
+        )
+        st.bar_chart(monthly, x="month", y=["Gross revenue", "Net revenue"], stack=False, y_label="USD")
+    with right:
+        st.subheader("Net revenue by category")
+        by_category = filtered(
+            """
+            SELECT category, sum(net_revenue) AS "Net revenue"
+            FROM fct_order_lines WHERE {filters}
+            GROUP BY 1 ORDER BY 2 DESC
+            """,
+            *selection,
+        )
+        st.bar_chart(by_category, x="category", y="Net revenue", horizontal=True, x_label="USD")
+
+
+def render_breakdowns(selection: tuple) -> None:
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Country mix")
+        countries = filtered(
+            """
+            WITH per_order AS (
+                SELECT order_id, country, sum(net_revenue) AS net_revenue
+                FROM fct_order_lines WHERE {filters}
+                GROUP BY 1, 2
+            )
+            SELECT country,
+                   count(*)                                AS orders,
+                   count(*) FILTER (WHERE net_revenue > 0) AS paid_orders,
+                   sum(net_revenue)                        AS net_revenue,
+                   sum(net_revenue) / nullif(count(*) FILTER (WHERE net_revenue > 0), 0) AS aov
+            FROM per_order GROUP BY 1 ORDER BY net_revenue DESC
+            """,
+            *selection,
+        )
+        st.dataframe(
+            countries,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "net_revenue": st.column_config.NumberColumn("Net revenue", format="dollar"),
+                "aov": st.column_config.NumberColumn("AOV (paid orders)", format="dollar"),
+            },
+        )
+    with right:
+        st.subheader("Top 10 products")
+        products = filtered(
+            """
+            SELECT product_name AS product, category,
+                   sum(net_revenue) AS net_revenue,
+                   sum(returned_revenue) / nullif(sum(gross_revenue), 0) AS return_rate
+            FROM fct_order_lines WHERE {filters}
+            GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10
+            """,
+            *selection,
+        )
+        st.dataframe(
+            products,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "net_revenue": st.column_config.NumberColumn("Net revenue", format="dollar"),
+                "return_rate": st.column_config.NumberColumn("Return rate", format="percent"),
+            },
+        )
+
+
+def render_cohorts() -> None:
+    st.subheader("First-purchase cohort retention")
+    cohorts = query("SELECT * FROM mart_cohort_retention")
+    pivot = cohorts.pivot(index="cohort_month", columns="month_offset", values="retention_rate")
+    pivot.columns = [f"Month {m}" for m in pivot.columns]
+    sizes = cohorts.groupby("cohort_month")["cohort_customers"].first()
+    pivot.index = [f"{c} (n={sizes[c]})" for c in pivot.index]
+    st.dataframe(
+        pivot.style.format("{:.1%}", na_rep="").background_gradient(cmap="YlGnBu", vmin=0.0, vmax=1.0),
+        width="stretch",
+    )
+    st.caption(
+        "Share of each first-purchase cohort with at least one qualifying order N months later. "
+        "Blank cells are not yet observable (after the last month of data). "
+        "See the README section 'Diagnosing Synthetic Artifacts' before reading trends into this table."
+    )
 
 
 def main() -> None:
-    st.set_page_config(page_title="Портфель аналитики продаж", layout="wide")
-    st.title("Аналитика розничных продаж (демонстрация портфеля)")
-    st.caption("Синтетические B2C данные · SQL конвейер с DuckDB · диаграммы из matplotlib")
+    st.set_page_config(page_title="Retail Metrics", layout="wide")
+    st.title("Retail Metrics & Cohort Analytics")
+    st.caption("Synthetic B2C e-commerce data · DuckDB staging + marts · all figures in USD")
 
-    # Data validation: check required data files exist
-    required_files = [
-        DATA / "orders.csv",
-        DATA / "customers.csv",
-        DATA / "order_items.csv",
-    ]
-    if any(not p.exists() for p in required_files):
-        st.warning(
-            "Data files not found. Run 'python scripts/generate_data.py' and 'python src/run_pipeline.py' first."
-        )
+    try:
+        get_connection()
+    except FileNotFoundError as exc:
+        st.error(f"{exc}. Generate the raw data first: `python scripts/generate_data.py`.")
         st.stop()
 
-    orders = load_csv("orders.csv")
-    items = load_csv("order_items.csv")
-    customers = load_csv("customers.csv")
+    selection = render_sidebar()
+    if not selection[0] or not selection[1]:
+        st.info("Select at least one country and one category.")
+        st.stop()
 
-    total_gmv = compute_total_gmv(orders, items)
-    orders_count = len(orders)
-    customers_count = len(customers)
-    completed_count = int((orders["status"] == "completed").sum()) if "status" in orders.columns else 0
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Total GMV", f"${round(total_gmv):,}")
-    with c2:
-        st.metric("Orders (all statuses)", f"{orders_count:,}")
-    with c3:
-        st.metric("Completed orders", f"{completed_count:,}")
-    with c4:
-        st.metric("Customers", f"{customers_count:,}")
-
-    st.subheader("Предварительно вычисленные результаты SQL")
-    csv_files = sorted(OUT.glob("*.csv")) if OUT.exists() else []
-    if csv_files:
-        for path in csv_files:
-            with st.expander(path.name):
-                st.dataframe(pd.read_csv(path), width="stretch")
-    else:
-        st.info("Запустите `python src/run_pipeline.py` для заполнения папки outputs/.")
-
-    st.subheader("Диаграммы")
-    gmv_m = REP / "gmv_by_month.png"
-    gmv_c = REP / "gmv_by_category.png"
-    col_a, col_b = st.columns(2)
-    if gmv_m.exists():
-        col_a.image(str(gmv_m), width="stretch")
-    else:
-        col_a.write("gmv_by_month.png — запустите конвейер")
-    if gmv_c.exists():
-        col_b.image(str(gmv_c), width="stretch")
-    else:
-        col_b.write("gmv_by_category.png — запустите конвейер")
-
-    # Cohort Retention Analysis
-    cohort_heatmap = None
-    if (REP / "cohort_retention_heatmap.png").exists():
-        cohort_heatmap = REP / "cohort_retention_heatmap.png"
-    elif (OUT / "cohort_retention_heatmap.png").exists():
-        cohort_heatmap = OUT / "cohort_retention_heatmap.png"
-
-    if cohort_heatmap is not None:
-        st.subheader("Cohort Retention Analysis")
-        st.image(str(cohort_heatmap), width="stretch")
+    render_kpis(selection)
+    render_trends(selection)
+    render_breakdowns(selection)
+    render_cohorts()
 
 
 if __name__ == "__main__":

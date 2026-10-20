@@ -1,6 +1,6 @@
-category,gmv_usd,units_sold_net
-Books,347856.91,1833.0
-Sports,327591.9,2020.0
-Electronics,270981.47,2037.0
-Apparel,257411.24,1922.0
-Home,189863.35,1975.0
+category,gross_revenue_usd,net_revenue_usd,return_rate,units_sold_net
+Books,390211.26,362248.08,0.0717,1922
+Sports,344269.47,321703.02,0.0655,2042
+Electronics,319430.79,300522.31,0.0592,2261
+Apparel,275023.15,260725.98,0.052,1932
+Home,217749.28,203230.0,0.0667,2116

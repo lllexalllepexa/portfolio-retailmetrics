@@ -1,12 +1,11 @@
--- GMV by product category (completed + returned with net qty).
+-- Gross and net revenue, return rate and net units by product category.
 
 SELECT
-    p.category,
-    round(sum((oi.quantity - oi.quantity_returned) * oi.unit_price_paid), 2) AS gmv_usd,
-    sum(oi.quantity - oi.quantity_returned) AS units_sold_net
-FROM order_items AS oi
-JOIN orders AS o ON oi.order_id = o.order_id
-JOIN products AS p ON oi.product_id = p.product_id
-WHERE o.status IN ('completed', 'returned')
+    category,
+    round(sum(gross_revenue), 2)                                        AS gross_revenue_usd,
+    round(sum(net_revenue), 2)                                          AS net_revenue_usd,
+    round(sum(returned_revenue) / nullif(sum(gross_revenue), 0), 4)     AS return_rate,
+    CAST(sum(quantity_net) AS BIGINT)                                   AS units_sold_net
+FROM fct_order_lines
 GROUP BY 1
-ORDER BY gmv_usd DESC;
+ORDER BY net_revenue_usd DESC, category;

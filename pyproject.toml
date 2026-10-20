@@ -1,0 +1,30 @@
+[project]
+name = "retailmetrics"
+version = "0.2.0"
+description = "Retail metrics & cohort analytics on DuckDB with a Streamlit dashboard (synthetic data)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["retailmetrics"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["src", "scripts/plot_cohort_heatmap.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["retailmetrics", "scripts", "tests"]

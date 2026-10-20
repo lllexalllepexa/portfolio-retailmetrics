@@ -1,6 +1,42 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
 .venv/
 venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Local warehouse (rebuilt by `python -m retailmetrics.pipeline` or on first app start)
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp/
+
+# Secrets & local config
 .env
+.env.*
+.streamlit/secrets.toml
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
 .DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+tmp/

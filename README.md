@@ -1,267 +1,234 @@
-# 🛒 Retail Metrics & Customer Cohort Analytics
+# Retail Metrics & Customer Cohort Analytics
 
-> **An end-to-end Data Analytics & Analytics Engineering portfolio project featuring DuckDB OLAP modeling, automated ETL reporting, customer cohort retention analysis, and an interactive Streamlit application.**
+> A small, end-to-end analytics engineering project: raw CSVs → schema-enforced DuckDB load → data quality gates → a staging fact model → five SQL marts → charts and an interactive Streamlit dashboard, with golden-fixture tests and CI.
 
 [![CI](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Live_Demo-FF4B4B?logo=streamlit&logoColor=white)](https://lllexalllepexa-test1.streamlit.app/)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![DuckDB](https://img.shields.io/badge/DuckDB-1.0+-FFF000?logo=duckdb&logoColor=black)
-![Tests](https://img.shields.io/badge/Tests-Pytest-brightgreen?logo=pytest&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-1.5-FFF000?logo=duckdb&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-🇷🇺 **[Перейти к русской версии (README.ru.md)](README.ru.md)**
+**[Русская версия (README.ru.md)](README.ru.md)** · **[Live dashboard](https://lllexalllepexa-test1.streamlit.app/)**
+
+> [!IMPORTANT]
+> **All data is synthetic.** It is produced by [`scripts/generate_data.py`](scripts/generate_data.py) (seed 42) from deliberately simple distributions. The numbers below demonstrate the pipeline and the metric definitions; they are not findings about real customers. Several apparent trends are artifacts of the generator — see [Diagnosing Synthetic Artifacts](#diagnosing-synthetic-artifacts).
 
 ---
 
-## 🚀 Live Interactive Dashboard
+## Business questions
 
-Explore the interactive web application deployed on Streamlit Community Cloud:
+The scenario is a B2C e-commerce store selling in five markets (US, GB, DE, FR, PL), January–June 2024.
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://lllexalllepexa-test1.streamlit.app/)
+1. **Growth** — How is monthly net revenue developing, and is it driven by order volume or order value?
+2. **Category mix** — Which categories generate the most net revenue after returns, and where are returns concentrated?
+3. **Markets** — Does average order value differ between countries?
+4. **Retention** — What share of customers buy again in the months after their first purchase?
 
-👉 **Direct Link:** [https://lllexalllepexa-test1.streamlit.app/](https://lllexalllepexa-test1.streamlit.app/)
+## Results on the synthetic dataset
 
-The web app allows business stakeholders to interactively inspect precomputed SQL datasets, monitor executive KPI scorecards, and review visual reports across revenue cohorts, categories, and geographic markets.
-
----
-
-## 📌 Executive Summary & Business Challenge
-
-In an international B2C e-commerce business operating across five key markets (United States, United Kingdom, Germany, France, and Poland), executive leadership required transparency into **revenue trajectory**, **product mix**, **geographic efficiency**, and **customer retention dynamics**.
-
-### Strategic Business Questions:
-1. **Growth Velocity**: How fast is Gross Merchandise Value (GMV) expanding month-over-month, and is growth driven by order volume or order value?
-2. **Category Performance**: Which product categories generate the highest net revenue after accounting for customer returns?
-3. **Cross-Border Consistency**: Does Average Order Value (AOV) vary across international territories, or is basket purchasing power uniform?
-4. **Cohort Stickiness**: Are newly acquired customers developing long-term purchasing habits, or does customer retention degrade sharply after Month 0?
-
-To answer these questions, an automated analytical pipeline was constructed using an in-memory **DuckDB OLAP engine**, structured SQL analytical models with Common Table Expressions (CTEs), automated chart generation, and an interactive Streamlit dashboard.
-
----
-
-## 📊 Key Analytical Insights (Quantified)
-
-| Metric Area | Key Finding | Business Impact |
+| Area | Result | Read with |
 |---|---|---|
-| **GMV Trajectory** | **~15x Expansion** ($24.6K in Jan 2024 $\rightarrow$ $379.4K in Jun 2024) | Rapid top-line growth driven by surging order volume (from 41 to 569 monthly completed orders). Total H1 2024 GMV reached **$1,393,065**. |
-| **Category Leadership** | **Books ($347.9K)** & **Sports ($327.6K)** dominate GMV | Books and Sports represent **48.5%** of total net sales. High net unit volume (2,020 units in Sports, 1,833 in Books) confirms core product-market fit. |
-| **Cross-Country AOV** | **Uniform Basket Sizes** across borders (~$640 – $678 AOV) | While the US represents the primary volume driver (977 orders, $653.0K GMV), European markets show consistent AOV: **GB ($678.05)**, **FR ($655.93)**, **DE ($648.58)**, and **PL ($640.89)**. |
-| **Cohort Retention** | **Peak Month 1 Retention of 61.3%** (April 2024 Cohort) | April signups achieved exceptional M1 repeat purchase rates (61.3%), while baseline retention across cohorts stabilizes at a healthy **35%–45%** through Month 3. |
+| Totals (H1 2024) | **$1,448,429.39 net revenue** from $1,546,683.95 gross (6.35% returned by value); 2,171 qualifying orders from 1,027 purchasing customers; 116 cancelled orders excluded | — |
+| Growth | Net revenue rises from $34.1K (Jan, 60 orders) to $402.1K (Jun, 582 orders), ~11.8x | [Artifact 1](#1-growth-is-a-cumulative-customer-base-not-momentum) |
+| Category mix | Books ($362.2K) and Sports ($321.7K) are 47.2% of net revenue; return rates range 5.2% (Apparel) – 7.2% (Books) | Products are assigned uniformly at random, so ranking reflects price draws |
+| Markets | AOV (net revenue / paid orders): FR $726, PL $718, GB $709, US $690, DE $684 — **all 95% CIs overlap** (±$30–67) | [Artifact 3](#3-country-aov-differences-are-noise) |
+| Retention | Month 1 retention: Jan cohort 25.9%, Feb 31.5%, Mar 28.6%, **Apr 40.8%**, May 39.7% | [Artifact 2](#2-later-cohorts-look-stickier-because-their-orders-are-compressed) |
+
+Exact figures live in [`outputs/`](outputs/) and are regenerated (and diff-checked in CI) on every run.
+
+### Charts
+
+![First-purchase cohort retention](reports/cohort_retention_heatmap.png)
+
+| | |
+|---|---|
+| ![Revenue by month](reports/revenue_by_month.png) | ![Net revenue by category](reports/revenue_by_category.png) |
 
 ---
 
-## 📈 Visualizations & Analytical Deep-Dives
+## Diagnosing Synthetic Artifacts
 
-### 1. Customer Cohort Retention Heatmap
-Tracks monthly customer signup cohorts through subsequent activity months (Month 0 to Month 3 offset). Each cell represents the percentage of eligible cohort members who completed at least one qualifying order in that month.
+A dashboard will happily display any pattern in its input. Before attributing a trend to customer behavior, it is worth asking whether the data-generating process could have produced it by itself. Here, it does — for the three most "insightful-looking" results.
 
-![Cohort Retention Heatmap](reports/cohort_retention_heatmap.png)
+**How the generator works:** 1,200 customers sign up uniformly between Jan 1 and **Apr 30**. Each customer independently draws **0–5 orders (mean ≈ 1.8)**, with order dates uniform between their signup date and **Jun 30**. Country, products, discounts and statuses are drawn independently of everything else.
 
-> **Key Takeaway**: The **April 2024** cohort demonstrated significant acceleration in Month 1 engagement (**61.3%** vs 34.4% in Jan and 45.8% in Feb), indicating that spring promotional or onboarding campaigns successfully catalyzed early second-order transactions.
+### 1. Growth is a cumulative customer base, not momentum
+
+| Month | New signups | Cumulative signups | Active buyers | Orders | Net revenue / order |
+|---|---:|---:|---:|---:|---:|
+| 2024-01 | 295 | 295 | 54 | 60 | $568 |
+| 2024-02 | 288 | 583 | 125 | 138 | $655 |
+| 2024-03 | 324 | 907 | 267 | 319 | $676 |
+| 2024-04 | 293 | 1,200 | 368 | 468 | $661 |
+| 2024-05 | 0 | 1,200 | 467 | 604 | $658 |
+| 2024-06 | 0 | 1,200 | 450 | 582 | $691 |
+
+Revenue per order is flat; the entire increase is order volume, and volume tracks the number of customers who have already signed up and still have orders "left to place". The plateau in May–June is simply where signups stop. Nothing about demand, marketing or operations is encoded in the data, so none of it can be inferred.
+
+### 2. Later cohorts look stickier because their orders are compressed
+
+Every customer gets the same order-count distribution regardless of how much of the window remains:
+
+| Signup month | Customers | Avg. days left until Jun 30 | Non-cancelled orders / customer |
+|---|---:|---:|---:|
+| 2024-01 | 295 | 165 | 1.94 |
+| 2024-02 | 288 | 137 | 1.78 |
+| 2024-03 | 324 | 106 | 1.69 |
+| 2024-04 | 293 | 76 | 1.84 |
+
+An April signup places ~1.8 orders inside ~2.5 months; a January signup spreads the same ~1.8 orders over ~5.5 months. Packing an equal number of orders into fewer months mechanically raises the share of customers active in any given month — which is exactly what the Apr (40.8%) and May (39.7%) Month 1 cells show. The same mechanism explains why the January first-purchase cohort is small (n = 54): most January signups' first order lands in a later month.
+
+In real data, an uplift like this would justify a look at acquisition channels or onboarding changes. Here the correct conclusion is "no behavioral signal".
+
+### 3. Country AOV differences are noise
+
+Country is assigned independently of basket contents, so any AOV gap must be sampling noise. The data agrees: with n = 201–924 paid orders per country, 95% confidence intervals of ±$30–67 overlap for every pair of countries. Reporting "FR has the highest AOV" would be over-reading.
+
+### What a more realistic generator would need
+
+Tenure-dependent order counts, a decaying repurchase hazard (churn), seasonality, and country- or channel-specific basket sizes. With those, the same pipeline and tests would surface real structure instead of artifacts.
 
 ---
 
-### 2. GMV Growth Trajectory (Monthly)
-Month-over-month Gross Merchandise Value (net of partial/full returns) from fulfilled customer orders.
-
-![GMV by Month](reports/gmv_by_month.png)
-
-> **Key Takeaway**: Consistent compounding growth throughout Q1 and Q2 2024, stabilizing at ~$370K–$380K/month in May and June as operational capacity scaled.
-
----
-
-### 3. GMV Contribution by Product Category
-Total net revenue earned across all five product catalog verticals.
-
-![GMV by Category](reports/gmv_by_category.png)
-
-> **Key Takeaway**: Balanced catalog demand with clear revenue concentration: **Books** ($347.9K), **Sports** ($327.6K), **Electronics** ($271.0K), **Apparel** ($257.4K), and **Home** ($189.9K).
-
----
-
-## 🏗️ Data Architecture & Pipeline Flow
-
-The project follows modern Analytics Engineering design principles: modular SQL queries, in-memory OLAP data processing, deterministic synthetic data generation, and CI/CD automated validation.
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph RawData ["1. Data Ingestion Layer"]
-        C["customers.csv<br/>(Signups & Geography)"]
-        O["orders.csv<br/>(Timestamps & Status)"]
-        OI["order_items.csv<br/>(Quantities & Unit Prices)"]
-        P["products.csv<br/>(Catalog & Categories)"]
+    subgraph Raw["data/ (CSV)"]
+        C[customers] & O[orders] & OI[order_items] & P[products]
     end
-
-    subgraph OLAPEngine ["2. Processing & Modeling (DuckDB)"]
-        DDB[("DuckDB In-Memory OLAP<br/>Vectorized Engine")]
-        SQL1["01_revenue_by_month.sql"]
-        SQL2["02_revenue_by_category.sql"]
-        SQL3["03_country_orders_aov.sql"]
-        SQL4["04_top_products.sql"]
-        SQL5["05_cohort_retention.sql"]
+    subgraph Load["retailmetrics.io + quality"]
+        L["Schema-enforced load<br/>(explicit column types)"]
+        Q{"22 data quality gates<br/>DataQualityError"}
     end
-
-    subgraph Outputs ["3. Serving & Reporting Layer"]
-        CSVOut["Aggregated Tables<br/>outputs/*.csv"]
-        Charts["Visual Assets<br/>reports/*.png"]
+    subgraph Model["DuckDB warehouse"]
+        S["staging/fct_order_lines<br/>(view, all measures defined once)"]
+        M["5 marts: mart_*<br/>(tables)"]
     end
-
-    subgraph Presentation ["4. Business Stakeholder Access"]
-        Streamlit["Streamlit Cloud App<br/>Interactive Metrics Explorer"]
-        Pytest["Pytest Test Suite<br/>Data Quality & CI/CD"]
+    subgraph Serve["Serving"]
+        CSV["outputs/*.csv"]
+        PNG["reports/*.png"]
+        APP["Streamlit dashboard<br/>(live filtered queries)"]
     end
-
-    RawData --> DDB
-    DDB --> SQL1 & SQL2 & SQL3 & SQL4 & SQL5
-    SQL1 & SQL2 & SQL3 & SQL4 & SQL5 --> CSVOut
-    SQL1 & SQL2 & SQL5 --> Charts
-    CSVOut --> Streamlit
-    Charts --> Streamlit
-    Outputs --> Pytest
+    Raw --> L --> Q --> S --> M
+    M --> CSV & PNG
+    S & M --> APP
 ```
 
----
+- **One place for business logic.** Every revenue measure (`gross_revenue`, `returned_revenue`, `net_revenue`, `discount_amount`, `quantity_net`) and the qualifying-status filter live in [`sql/staging/fct_order_lines.sql`](sql/staging/fct_order_lines.sql). Marts aggregate it; the dashboard queries it with filters.
+- **Fail fast.** Raw files are loaded with declared types and checked headers, then validated before any model runs. All failing checks are reported together.
+- **Explicit DAG.** Models run in the order declared in [`retailmetrics/models.py`](retailmetrics/models.py); marts are materialized as `mart_*` tables in `warehouse.duckdb`.
 
-## 🗄️ Analytics SQL Catalog
+## SQL models (DuckDB SQL dialect)
 
-All queries are written in standard ANSI SQL optimized for DuckDB execution:
+| Model | Grain / purpose | Key columns |
+|---|---|---|
+| [`staging/fct_order_lines`](sql/staging/fct_order_lines.sql) | One row per line on a completed or returned order | `gross_revenue`, `returned_revenue`, `net_revenue`, `discount_amount`, `quantity_net` |
+| [`01_revenue_by_month`](sql/01_revenue_by_month.sql) | Month | `gross_revenue_usd`, `net_revenue_usd`, `return_rate`, `order_count` |
+| [`02_revenue_by_category`](sql/02_revenue_by_category.sql) | Category | `gross_revenue_usd`, `net_revenue_usd`, `return_rate`, `units_sold_net` (BIGINT) |
+| [`03_country_orders_aov`](sql/03_country_orders_aov.sql) | Country | `orders`, `paid_orders`, `net_revenue_usd`, `aov_usd` |
+| [`04_top_products`](sql/04_top_products.sql) | Product (top 15) | `net_revenue_usd`, `return_rate`, `units_sold_net` |
+| [`05_cohort_retention`](sql/05_cohort_retention.sql) | Cohort × month offset 0–3 | `cohort_customers`, `active_customers`, `retention_rate` |
 
-| # | Query File | Analytical Focus | Core SQL Concepts |
-|:---:|---|---|---|
-| **01** | [`sql/01_revenue_by_month.sql`](sql/01_revenue_by_month.sql) | **Monthly Revenue & Volume**<br/>Computes total monthly GMV and unique order count. | `strftime()`, `sum()`, `count(DISTINCT)`, `WHERE status IN ('completed', 'returned')` |
-| **02** | [`sql/02_revenue_by_category.sql`](sql/02_revenue_by_category.sql) | **Category Breakdown**<br/>Aggregates net revenue and units sold accounting for item returns. | Multi-table joins (`orders`, `order_items`, `products`), aggregate net calculation |
-| **03** | [`sql/03_country_orders_aov.sql`](sql/03_country_orders_aov.sql) | **Geographic Mix & AOV**<br/>Evaluates order volume, revenue, and average basket size per country. | Common Table Expressions (CTE), `nullif()` division safeguards, order-level aggregation |
-| **04** | [`sql/04_top_products.sql`](sql/04_top_products.sql) | **Top Performing SKUs**<br/>Identifies top 15 revenue-generating items. | `GROUP BY`, `ORDER BY gmv_usd DESC`, `LIMIT 15` |
-| **05** | [`sql/05_cohort_retention.sql`](sql/05_cohort_retention.sql) | **Customer Cohort Retention Matrix**<br/>Calculates customer retention across signup cohorts for Month offsets 0–3. | Multi-stage CTEs (`signup`, `eligible`, `activity`, `with_offset`, `cohort_sizes`), `date_trunc()`, `date_diff()` |
+The queries use DuckDB-specific functions (`strftime`, `date_trunc`, `date_diff`, `range`, `to_months`, `FILTER`, `ANTI JOIN`).
 
----
+## Metric definitions
 
-## 📐 Business Metric Definitions & Logic
+| Metric | Definition |
+|---|---|
+| Qualifying order | Status `completed` or `returned`. `cancelled` orders are excluded everywhere. |
+| Gross revenue | Σ quantity × unit price paid (after discount, before returns) |
+| Net revenue | Σ (quantity − quantity returned) × unit price paid |
+| Return rate | Returned revenue / gross revenue |
+| Discount amount | Σ quantity × (list price − unit price paid) |
+| Orders | Count of qualifying orders, including fully returned ones |
+| Paid orders | Qualifying orders with net revenue > 0 |
+| AOV | Net revenue / paid orders (fully refunded orders do not dilute it) |
+| Cohort month | Calendar month of the customer's **first qualifying order** |
+| Retention rate (c, n) | Share of cohort c with ≥ 1 qualifying order in month c + n. Month 0 = 100% by definition. Zero-activity cells are reported as 0%; cells after the last month of data are right-censored and omitted. |
 
-- **Gross Merchandise Value (GMV)**:
-  $$\text{GMV} = \sum (\text{Quantity} - \text{Returned Quantity}) \times \text{Unit Price}$$
-  *SQL logic:* `sum((quantity - quantity_returned) * unit_price_paid)`. Calculated only across orders with status `completed` or `returned`. Orders flagged as `cancelled` are strictly excluded. Partial item returns are deducted from line-level totals.
+> "GMV" is intentionally not used: it conventionally means gross value before returns, while most marts here report net revenue.
 
-- **Average Order Value (AOV)**:
-  $$\text{AOV} = \frac{\text{Total GMV}}{\text{Distinct Qualifying Orders}}$$
+## Data quality
 
-- **Cohort Month**:
-  $$\text{Cohort Month} = \text{DateTrunc}(\text{'month'}, \text{Signup Date})$$
+[`retailmetrics/quality.py`](retailmetrics/quality.py) runs 22 SQL checks before modeling and raises `DataQualityError` listing every failure:
 
-- **Retention Rate**:
-  $$\text{Retention Rate}_{c, n} = \frac{\text{Active Customers}_{c, n}}{\text{Total Customers}_c}$$
-  *Where $c$ represents the acquisition cohort and $n \in [0, 3]$ represents the calendar month offset.*
+- primary keys: not NULL, unique (all four tables)
+- foreign keys: not NULL, no orphans (orders → customers, order_items → orders, order_items → products)
+- business rules: allowed statuses; `order_date ≥ signup_date`; every order has line items; quantity > 0; non-negative prices; `0 ≤ quantity_returned ≤ quantity`; returned units only on returned orders; every returned order has ≥ 1 returned unit
 
----
+The last rule caught a real bug in the original generator (returned orders with nothing returned), now fixed.
 
-## 📁 Repository Structure
+## Testing
 
-```text
-portfolio-retailmetrics-audit/
-├── .github/
-│   └── workflows/
-│       └── ci.yml                # GitHub Actions automated test & build pipeline
-├── data/                         # Source transactional datasets (CSV)
-│   ├── customers.csv             # Customer IDs, signup dates, country codes
-│   ├── orders.csv                # Order timestamps, customer references, statuses
-│   ├── order_items.csv           # Line items, quantities, prices, return counts
-│   └── products.csv              # Product catalog, categories, list prices
-├── outputs/                      # Output datasets generated by SQL pipeline
-│   ├── 01_revenue_by_month.csv
-│   ├── 02_revenue_by_category.csv
-│   ├── 03_country_orders_aov.csv
-│   ├── 04_top_products.csv
-│   └── 05_cohort_retention.csv
-├── reports/                      # High-resolution visualization artifacts (PNG)
-│   ├── cohort_retention_heatmap.png
-│   ├── gmv_by_category.png
-│   └── gmv_by_month.png
-├── scripts/
-│   ├── generate_data.py          # Deterministic synthetic data generator (seed=42)
-│   └── plot_cohort_heatmap.py   # Seaborn/Matplotlib cohort heatmap generator
-├── sql/                          # Production analytical SQL queries
-│   ├── 01_revenue_by_month.sql
-│   ├── 02_revenue_by_category.sql
-│   ├── 03_country_orders_aov.sql
-│   ├── 04_top_products.sql
-│   └── 05_cohort_retention.sql
-├── src/
-│   └── run_pipeline.py           # Pipeline orchestrator (DuckDB execution & charting)
-├── tests/
-│   └── test_pipeline_and_data.py # Automated test suite (schemas, integrity, invariants)
-├── requirements.txt              # Project dependencies
-├── streamlit_app.py              # Interactive Streamlit analytics web application
-├── README.ru.md                  # Russian version of the documentation
-└── README.md                     # Main project documentation (English)
-```
-
----
-
-## ⚡ Quickstart & Local Setup
-
-### 1. Prerequisites
-- Python **3.11** (or compatible 3.10+)
-- `git`
-
-### 2. Clone and Setup Environment
-```bash
-git clone https://github.com/lllexalllepexa/portfolio-retailmetrics.git
-cd portfolio-retailmetrics
-
-# Create virtual environment
-python -m venv .venv
-
-# Activate virtual environment
-# On Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# On macOS / Linux:
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 3. Run the Analytical Pipeline
-Execute the pipeline to load CSV data into DuckDB, run all SQL transformations, and regenerate output CSVs and charts:
-```bash
-python src/run_pipeline.py
-```
-
-### 4. Launch the Interactive Streamlit App
-```bash
-streamlit run streamlit_app.py
-```
-*Access the local web dashboard at `http://localhost:8501`.*
-
-### 5. Run Automated Tests
-Run the comprehensive test suite verifying data integrity, schema consistency, SQL execution, and chart outputs:
 ```bash
 pytest -v
 ```
 
-### 6. (Optional) Regenerate Synthetic Data
-To generate a clean synthetic dataset with deterministic random seed (`seed=42`):
+| Suite | What it proves |
+|---|---|
+| [`tests/test_metrics.py`](tests/test_metrics.py) | Exact metric values on a hand-computed golden fixture (2 customers, 4 orders incl. a partial return and a cancellation): net vs. gross revenue, cancelled exclusion, integer unit counts, AOV denominator, first-purchase cohort anchoring, Month 0 = 1.0, zero-cell spine, censoring |
+| [`tests/test_quality.py`](tests/test_quality.py) | Each data quality gate fires on an injected defect; schema mismatches and missing files are rejected |
+| [`tests/test_pipeline_and_data.py`](tests/test_pipeline_and_data.py) | Generator determinism and return logic; full pipeline run; net revenue reconciles across marts; committed `data/` and `outputs/` equal a fresh regeneration |
+| [`tests/test_streamlit_app.py`](tests/test_streamlit_app.py) | Dashboard renders and KPIs respond to the country filter |
+
+All tests write only to pytest temporary directories, so they never modify the working tree and can run in any order.
+
+## Quickstart
+
+Requires Python 3.11+.
+
 ```bash
-python scripts/generate_data.py
-python src/run_pipeline.py
+git clone https://github.com/lllexalllepexa/portfolio-retailmetrics.git
+cd portfolio-retailmetrics
+python -m venv .venv
+source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 ```
 
----
+```bash
+python -m retailmetrics.pipeline   # build warehouse.duckdb, outputs/*.csv, reports/*.png
+streamlit run streamlit_app.py     # http://localhost:8501 (builds the warehouse itself if missing)
+pytest -v
+ruff check . && ruff format --check .
+```
 
-## 🛠️ Technology Stack & Engineering Standards
+To regenerate the synthetic raw data (deterministic, seed 42):
 
-- **OLAP Engine**: [DuckDB](https://duckdb.org/) (High-performance in-process analytical SQL)
-- **Programming & Scripting**: Python 3.11+, Pandas, NumPy
-- **Visual Analytics**: Matplotlib, Seaborn
-- **Stakeholder Presentation**: [Streamlit](https://streamlit.io/) Cloud
-- **Automated Testing**: Pytest (schema validation, foreign key checks, non-negative invariants)
-- **Continuous Integration**: GitHub Actions CI (`ci.yml`)
+```bash
+python scripts/generate_data.py
+python -m retailmetrics.pipeline
+```
 
----
+## Repository layout
 
-## 👤 Author & Contact
+```text
+portfolio-retailmetrics/
+├── data/                         # Raw synthetic CSVs (committed, reproducible)
+├── outputs/                      # Mart exports (committed, diff-checked in CI)
+├── reports/                      # Charts used in this README
+├── retailmetrics/                # Pipeline package
+│   ├── config.py                 #   repository paths
+│   ├── io.py                     #   schema-enforced CSV loading
+│   ├── quality.py                #   data quality gates
+│   ├── models.py                 #   staging + mart DAG
+│   ├── charts.py                 #   static charts
+│   └── pipeline.py               #   CLI entry point
+├── scripts/generate_data.py      # Synthetic data generator
+├── sql/
+│   ├── staging/fct_order_lines.sql
+│   └── 01_… – 05_….sql           # Marts
+├── tests/                        # Golden fixtures, quality, end-to-end, dashboard
+├── streamlit_app.py              # Dashboard
+├── pyproject.toml                # Package, pytest and ruff config
+├── requirements.txt              # Runtime pins (used by Streamlit Cloud)
+└── requirements-dev.txt          # + pytest, ruff
+```
 
-**Aleksei** — Analytics Engineer / Data Analyst
-- **Live Demo**: [Streamlit Cloud Dashboard](https://lllexalllepexa-test1.streamlit.app/)
-- **GitHub**: [@lllexalllepexa](https://github.com/lllexalllepexa)
-- **Repository**: [portfolio-retailmetrics](https://github.com/lllexalllepexa/portfolio-retailmetrics)
+## Stack
+
+DuckDB 1.5 · Python 3.11 · pandas · Matplotlib / Seaborn · Streamlit · pytest · Ruff · GitHub Actions
+
+## Author
+
+**Aleksei**, Analytics Engineer / Data Analyst · [GitHub @lllexalllepexa](https://github.com/lllexalllepexa) · [Live dashboard](https://lllexalllepexa-test1.streamlit.app/)

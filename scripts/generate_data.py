@@ -1,135 +1,175 @@
+"""Generate reproducible synthetic e-commerce CSVs for the portfolio project.
+
+Run: python scripts/generate_data.py [--out DIR] [--seed N]
+
+The distributions are deliberately simple (uniform signup dates Jan-Apr, uniform order dates
+between signup and the end of the window). README "Diagnosing Synthetic Artifacts" explains
+which downstream trends are produced by these mechanics rather than by customer behavior.
 """
-Generate reproducible synthetic e-commerce CSVs for the portfolio project.
-Run: python scripts/generate_data.py
-"""
+
 from __future__ import annotations
 
+import argparse
 import csv
+import logging
 import random
 from datetime import date, timedelta
 from pathlib import Path
+from typing import TypedDict
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data"
+log = logging.getLogger(__name__)
+
+DEFAULT_OUT = Path(__file__).resolve().parents[1] / "data"
 
 CATEGORIES = ["Electronics", "Home", "Apparel", "Sports", "Books"]
+COUNTRIES = ["US", "DE", "FR", "PL", "GB"]
+COUNTRY_WEIGHTS = [0.45, 0.15, 0.12, 0.10, 0.18]
+ORDERS_PER_CUSTOMER = [0, 1, 2, 3, 4, 5]
+ORDERS_PER_CUSTOMER_WEIGHTS = [0.12, 0.35, 0.25, 0.15, 0.08, 0.05]
+STATUSES = ["completed", "returned", "cancelled"]
+STATUS_WEIGHTS = [0.88, 0.07, 0.05]
+DISCOUNTS = [0.0, 0.0, 0.05, 0.1, 0.15]
+
+N_CUSTOMERS = 1200
+PRODUCTS_PER_CATEGORY = 8
+START = date(2024, 1, 1)
+END = date(2024, 6, 30)
+SIGNUP_WINDOW_DAYS = 120
 
 
-def main() -> None:
-    random.seed(42)
-    DATA.mkdir(parents=True, exist_ok=True)
+class Product(TypedDict):
+    product_id: int
+    category: str
+    name: str
+    list_price: float
 
-    start_global = date(2024, 1, 1)
-    end_global = date(2024, 6, 30)
 
-    products: list[dict] = []
-    pid = 1
+class Customer(TypedDict):
+    customer_id: int
+    signup_date: str
+    country: str
+
+
+class Order(TypedDict):
+    order_id: int
+    customer_id: int
+    order_date: str
+    status: str
+
+
+class OrderItem(TypedDict):
+    order_line_id: int
+    order_id: int
+    product_id: int
+    quantity: int
+    unit_price_paid: float
+    quantity_returned: int
+
+
+def returned_units(status: str, qty: int, rng: random.Random) -> int:
+    """Full return 60% of the time, otherwise a partial return of at least one unit."""
+    if status != "returned":
+        return 0
+    return qty if rng.random() < 0.6 else rng.randint(1, qty)
+
+
+def make_products(rng: random.Random) -> list[Product]:
+    products: list[Product] = []
     for cat in CATEGORIES:
-        for i in range(1, 9):
+        for i in range(1, PRODUCTS_PER_CATEGORY + 1):
             products.append(
-                {
-                    "product_id": pid,
-                    "category": cat,
-                    "name": f"{cat} item {i}",
-                    "list_price": round(random.uniform(9.99, 299.99), 2),
-                }
-            )
-            pid += 1
-
-    customers: list[dict] = []
-    for cid in range(1, 1201):
-        signup = start_global + timedelta(days=random.randint(0, 120))
-        customers.append(
-            {
-                "customer_id": cid,
-                "signup_date": signup.isoformat(),
-                "country": random.choices(
-                    ["US", "DE", "FR", "PL", "GB"],
-                    weights=[0.45, 0.15, 0.12, 0.1, 0.18],
-                    k=1,
-                )[0],
-            }
-        )
-
-    orders: list[dict] = []
-    order_items: list[dict] = []
-    order_id = 1
-    line_id = 1
-
-    for cid in range(1, 1201):
-        n_orders = random.choices([0, 1, 2, 3, 4, 5], weights=[0.12, 0.35, 0.25, 0.15, 0.08, 0.05], k=1)[0]
-        cust = customers[cid - 1]
-        signup = date.fromisoformat(cust["signup_date"])
-        for _ in range(n_orders):
-            order_date = max(
-                signup,
-                min(
-                    end_global,
-                    signup + timedelta(days=random.randint(0, (end_global - signup).days or 1)),
-                ),
-            )
-            status = random.choices(["completed", "returned", "cancelled"], weights=[0.88, 0.07, 0.05], k=1)[0]
-            orders.append(
-                {
-                    "order_id": order_id,
-                    "customer_id": cid,
-                    "order_date": order_date.isoformat(),
-                    "status": status,
-                }
-            )
-            n_lines = random.randint(1, 4)
-            for _l in range(n_lines):
-                p = random.choice(products)
-                qty = random.randint(1, 3)
-                discount = random.choice([0.0, 0.0, 0.05, 0.1, 0.15])
-                unit = round(p["list_price"] * (1 - discount), 2)
-                if status == "returned" and random.random() < 0.4:
-                    qty_returned = random.randint(0, qty)
-                else:
-                    qty_returned = qty if status == "returned" else 0
-                order_items.append(
-                    {
-                        "order_line_id": line_id,
-                        "order_id": order_id,
-                        "product_id": p["product_id"],
-                        "quantity": qty,
-                        "unit_price_paid": unit,
-                        "quantity_returned": qty_returned if status == "returned" else 0,
-                    }
+                Product(
+                    product_id=len(products) + 1,
+                    category=cat,
+                    name=f"{cat} item {i}",
+                    list_price=round(rng.uniform(9.99, 299.99), 2),
                 )
-                line_id += 1
-            order_id += 1
+            )
+    return products
 
-    def write_csv(name: str, rows: list[dict], fieldnames: list[str]) -> None:
-        path = DATA / name
-        with path.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            w.writerows(rows)
 
-    write_csv(
-        "products.csv",
-        products,
-        ["product_id", "category", "name", "list_price"],
-    )
-    write_csv(
-        "customers.csv",
-        customers,
-        ["customer_id", "signup_date", "country"],
-    )
-    write_csv(
-        "orders.csv",
-        orders,
-        ["order_id", "customer_id", "order_date", "status"],
-    )
-    write_csv(
-        "order_items.csv",
-        order_items,
-        ["order_line_id", "order_id", "product_id", "quantity", "unit_price_paid", "quantity_returned"],
-    )
+def make_customers(rng: random.Random) -> list[Customer]:
+    return [
+        Customer(
+            customer_id=cid,
+            signup_date=(START + timedelta(days=rng.randint(0, SIGNUP_WINDOW_DAYS))).isoformat(),
+            country=rng.choices(COUNTRIES, weights=COUNTRY_WEIGHTS, k=1)[0],
+        )
+        for cid in range(1, N_CUSTOMERS + 1)
+    ]
 
-    print(f"Wrote {len(products)} products, {len(customers)} customers, {len(orders)} orders, {len(order_items)} order lines -> {DATA}")
+
+def make_orders(
+    customers: list[Customer], products: list[Product], rng: random.Random
+) -> tuple[list[Order], list[OrderItem]]:
+    orders: list[Order] = []
+    items: list[OrderItem] = []
+    for cust in customers:
+        signup = date.fromisoformat(cust["signup_date"])
+        n_orders = rng.choices(ORDERS_PER_CUSTOMER, weights=ORDERS_PER_CUSTOMER_WEIGHTS, k=1)[0]
+        for _ in range(n_orders):
+            order_id = len(orders) + 1
+            order_date = signup + timedelta(days=rng.randint(0, (END - signup).days))
+            status = rng.choices(STATUSES, weights=STATUS_WEIGHTS, k=1)[0]
+            orders.append(
+                Order(
+                    order_id=order_id, customer_id=cust["customer_id"], order_date=order_date.isoformat(), status=status
+                )
+            )
+            for _ in range(rng.randint(1, 4)):
+                product = rng.choice(products)
+                qty = rng.randint(1, 3)
+                discount = rng.choice(DISCOUNTS)
+                items.append(
+                    OrderItem(
+                        order_line_id=len(items) + 1,
+                        order_id=order_id,
+                        product_id=product["product_id"],
+                        quantity=qty,
+                        unit_price_paid=round(product["list_price"] * (1 - discount), 2),
+                        quantity_returned=returned_units(status, qty, rng),
+                    )
+                )
+    return orders, items
+
+
+def write_csv(path: Path, rows: list, fieldnames: list[str]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def generate(out_dir: Path = DEFAULT_OUT, seed: int = 42) -> dict[str, int]:
+    """Write the four raw CSVs to ``out_dir`` and return row counts per table."""
+    rng = random.Random(seed)
+    products = make_products(rng)
+    customers = make_customers(rng)
+    orders, items = make_orders(customers, products, rng)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tables: dict[str, tuple[list, type]] = {
+        "products": (products, Product),
+        "customers": (customers, Customer),
+        "orders": (orders, Order),
+        "order_items": (items, OrderItem),
+    }
+    for name, (rows, row_type) in tables.items():
+        write_csv(out_dir / f"{name}.csv", rows, list(row_type.__annotations__))
+    return {name: len(rows) for name, (rows, _) in tables.items()}
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    parser = argparse.ArgumentParser(description="Generate synthetic retail CSVs.")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args(argv)
+
+    counts = generate(args.out, args.seed)
+    log.info("Wrote %s -> %s", ", ".join(f"{n} {t}" for t, n in counts.items()), args.out)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
