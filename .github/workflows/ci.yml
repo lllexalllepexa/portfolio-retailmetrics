@@ -14,11 +14,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Generate synthetic data
-        run: python scripts/generate_data.py
-      - name: Run SQL analytics pipeline
-        run: python src/run_pipeline.py
-      - name: Run automated tests
+        run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Tests (golden fixtures, quality gates, end-to-end in tmp dirs)
         run: pytest -v
+      - name: Committed data and outputs are reproducible
+        run: |
+          python scripts/generate_data.py
+          python -m retailmetrics.pipeline
+          git diff --exit-code -- data outputs
