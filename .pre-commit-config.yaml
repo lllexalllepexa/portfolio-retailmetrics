@@ -1,0 +1,11 @@
+# Local quality gate that runs on every `git commit` (hosted CI is unavailable for this repo).
+# Setup once:  pip install -r requirements-dev.txt && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: checks
+        name: ruff + pytest (scripts/check.py)
+        entry: python scripts/check.py
+        language: system
+        pass_filenames: false
+        always_run: true

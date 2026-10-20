@@ -1,10 +1,10 @@
 name: ci
 
+# Manual trigger only: GitHub-hosted runners are unavailable on this account, and automatic runs
+# would mark every commit as failed. Checks run locally via `python scripts/check.py` and the
+# pre-commit hook. Restore the push / pull_request triggers when hosted runners are available.
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   pipeline:
@@ -18,12 +18,8 @@ jobs:
           cache-dependency-path: requirements*.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Lint
-        run: |
-          ruff check .
-          ruff format --check .
-      - name: Tests (golden fixtures, quality gates, end-to-end in tmp dirs)
-        run: pytest -v
+      - name: Lint, format, tests (golden fixtures, quality gates, end-to-end, reproducibility)
+        run: python scripts/check.py
       - name: Committed data and outputs are reproducible
         run: |
           python scripts/generate_data.py

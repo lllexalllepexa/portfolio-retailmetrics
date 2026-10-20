@@ -2,7 +2,6 @@
 
 > A small, end-to-end analytics engineering project: raw CSVs → schema-enforced DuckDB load → data quality gates → a staging fact model → five SQL marts → charts and an interactive Streamlit dashboard, with golden-fixture tests and CI.
 
-[![CI](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Live_Demo-FF4B4B?logo=streamlit&logoColor=white)](https://lllexalllepexa-test1.streamlit.app/)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.5-FFF000?logo=duckdb&logoColor=black)
@@ -34,7 +33,7 @@ The scenario is a B2C e-commerce store selling in five markets (US, GB, DE, FR, 
 | Markets | AOV (net revenue / paid orders): FR $726, PL $718, GB $709, US $690, DE $684 — **all 95% CIs overlap** (±$30–67) | [Artifact 3](#3-country-aov-differences-are-noise) |
 | Retention | Month 1 retention: Jan cohort 25.9%, Feb 31.5%, Mar 28.6%, **Apr 40.8%**, May 39.7% | [Artifact 2](#2-later-cohorts-look-stickier-because-their-orders-are-compressed) |
 
-Exact figures live in [`outputs/`](outputs/) and are regenerated (and diff-checked in CI) on every run.
+Exact figures live in [`outputs/`](outputs/); the test suite regenerates them from scratch and fails if they differ from the committed files.
 
 ### Charts
 
@@ -161,9 +160,13 @@ The last rule caught a real bug in the original generator (returned orders with 
 
 ## Testing
 
+One command runs everything a CI server would — Ruff lint, Ruff format check and the full pytest suite:
+
 ```bash
-pytest -v
+python scripts/check.py
 ```
+
+The same script runs automatically before every commit through a [pre-commit](https://pre-commit.com/) hook (`pre-commit install` once after setup). A GitHub Actions workflow is included in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) as a manual (`workflow_dispatch`) job; it calls the same script.
 
 | Suite | What it proves |
 |---|---|
@@ -184,13 +187,13 @@ cd portfolio-retailmetrics
 python -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
+pre-commit install                 # run checks before every commit
 ```
 
 ```bash
 python -m retailmetrics.pipeline   # build warehouse.duckdb, outputs/*.csv, reports/*.png
 streamlit run streamlit_app.py     # http://localhost:8501 (builds the warehouse itself if missing)
-pytest -v
-ruff check . && ruff format --check .
+python scripts/check.py            # ruff + full test suite
 ```
 
 To regenerate the synthetic raw data (deterministic, seed 42):
@@ -205,7 +208,7 @@ python -m retailmetrics.pipeline
 ```text
 portfolio-retailmetrics/
 ├── data/                         # Raw synthetic CSVs (committed, reproducible)
-├── outputs/                      # Mart exports (committed, diff-checked in CI)
+├── outputs/                      # Mart exports (committed, checked against regeneration by tests)
 ├── reports/                      # Charts used in this README
 ├── retailmetrics/                # Pipeline package
 │   ├── config.py                 #   repository paths
@@ -214,7 +217,9 @@ portfolio-retailmetrics/
 │   ├── models.py                 #   staging + mart DAG
 │   ├── charts.py                 #   static charts
 │   └── pipeline.py               #   CLI entry point
-├── scripts/generate_data.py      # Synthetic data generator
+├── scripts/
+│   ├── generate_data.py          # Synthetic data generator
+│   └── check.py                  # Lint + tests (local CI, used by pre-commit)
 ├── sql/
 │   ├── staging/fct_order_lines.sql
 │   └── 01_… – 05_….sql           # Marts
@@ -227,7 +232,7 @@ portfolio-retailmetrics/
 
 ## Stack
 
-DuckDB 1.5 · Python 3.11 · pandas · Matplotlib / Seaborn · Streamlit · pytest · Ruff · GitHub Actions
+DuckDB 1.5 · Python 3.11 · pandas · Matplotlib / Seaborn · Streamlit · pytest · Ruff · pre-commit
 
 ## Author
 

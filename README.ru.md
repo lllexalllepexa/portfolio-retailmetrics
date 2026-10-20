@@ -4,7 +4,6 @@
 
 [English version](README.md) | **Русская версия** · **[Живой дашборд](https://lllexalllepexa-test1.streamlit.app/)**
 
-[![CI](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/lllexalllepexa/portfolio-retailmetrics/actions)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Live_Demo-FF4B4B?logo=streamlit&logoColor=white)](https://lllexalllepexa-test1.streamlit.app/)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.5-FFF000?logo=duckdb&logoColor=black)
@@ -34,7 +33,7 @@
 | Рынки | AOV (чистая выручка / оплаченные заказы): FR $726, PL $718, GB $709, US $690, DE $684 — **95% доверительные интервалы всех стран пересекаются** (±$30–67) | [Артефакт 3](#3-разница-aov-между-странами--это-шум) |
 | Удержание | Удержание в Month 1: январская когорта 25,9%, февраль 31,5%, март 28,6%, **апрель 40,8%**, май 39,7% | [Артефакт 2](#2-поздние-когорты-выглядят-лояльнее-потому-что-их-заказы-сжаты-во-времени) |
 
-Точные значения — в [`outputs/`](outputs/); они пересчитываются при каждом запуске и сверяются в CI.
+Точные значения — в [`outputs/`](outputs/); тесты пересчитывают их с нуля и падают, если они расходятся с закоммиченными файлами.
 
 ### Графики
 
@@ -161,9 +160,13 @@ flowchart LR
 
 ## Тестирование
 
+Одна команда запускает всё, что выполнял бы CI-сервер: линтер Ruff, проверку форматирования и полный набор тестов pytest:
+
 ```bash
-pytest -v
+python scripts/check.py
 ```
+
+Этот же скрипт автоматически запускается перед каждым коммитом через хук [pre-commit](https://pre-commit.com/) (один раз после установки: `pre-commit install`). Workflow GitHub Actions лежит в [`.github/workflows/ci.yml`](.github/workflows/ci.yml) как ручной (`workflow_dispatch`) запуск и вызывает тот же скрипт.
 
 | Набор | Что проверяет |
 |---|---|
@@ -184,13 +187,13 @@ cd portfolio-retailmetrics
 python -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
+pre-commit install                 # проверки перед каждым коммитом
 ```
 
 ```bash
 python -m retailmetrics.pipeline   # warehouse.duckdb, outputs/*.csv, reports/*.png
 streamlit run streamlit_app.py     # http://localhost:8501 (при отсутствии хранилища соберёт его сам)
-pytest -v
-ruff check . && ruff format --check .
+python scripts/check.py            # ruff + все тесты
 ```
 
 Регенерация синтетических данных (детерминированно, seed 42):
@@ -205,7 +208,7 @@ python -m retailmetrics.pipeline
 ```text
 portfolio-retailmetrics/
 ├── data/                         # Сырые синтетические CSV (в репозитории, воспроизводимы)
-├── outputs/                      # Выгрузки витрин (в репозитории, сверяются в CI)
+├── outputs/                      # Выгрузки витрин (в репозитории, тесты сверяют их с регенерацией)
 ├── reports/                      # Графики для README
 ├── retailmetrics/                # Пакет пайплайна
 │   ├── config.py                 #   пути
@@ -214,7 +217,9 @@ portfolio-retailmetrics/
 │   ├── models.py                 #   DAG staging + витрины
 │   ├── charts.py                 #   статичные графики
 │   └── pipeline.py               #   точка входа CLI
-├── scripts/generate_data.py      # Генератор синтетических данных
+├── scripts/
+│   ├── generate_data.py          # Генератор синтетических данных
+│   └── check.py                  # Линтер + тесты (локальный CI, используется pre-commit)
 ├── sql/
 │   ├── staging/fct_order_lines.sql
 │   └── 01_… – 05_….sql           # Витрины
@@ -227,4 +232,4 @@ portfolio-retailmetrics/
 
 ## Стек
 
-DuckDB 1.5 · Python 3.11 · pandas · Matplotlib / Seaborn · Streamlit · pytest · Ruff · GitHub Actions
+DuckDB 1.5 · Python 3.11 · pandas · Matplotlib / Seaborn · Streamlit · pytest · Ruff · pre-commit
