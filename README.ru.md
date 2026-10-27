@@ -199,7 +199,7 @@ pre-commit install                 # проверки перед каждым к
 
 ```bash
 python -m retailmetrics.pipeline   # warehouse.duckdb, outputs/*.csv, reports/*.png
-streamlit run streamlit_app.py     # http://localhost:8501 (при отсутствии хранилища соберёт его сам)
+streamlit run streamlit_app.py     # http://localhost:8501 (при старте собирает хранилище в памяти из data/)
 python scripts/check.py            # ruff + все тесты
 ```
 

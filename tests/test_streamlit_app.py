@@ -1,30 +1,32 @@
-"""Smoke test: the dashboard renders against a tmp warehouse and reacts to filters."""
+"""Smoke test: the dashboard renders from a tmp data dir and reacts to filters."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from retailmetrics import config
-from retailmetrics.pipeline import build_warehouse_file
-from tests.golden import GOLDEN, write_tables
+from tests.golden import GOLDEN, TableRows, write_tables
 
 APP = str(Path(__file__).resolve().parents[1] / "streamlit_app.py")
 
 
-@pytest.fixture
-def app(tmp_path, monkeypatch) -> AppTest:
-    warehouse = tmp_path / "warehouse.duckdb"
-    build_warehouse_file(warehouse, data_dir=write_tables(tmp_path / "data", GOLDEN))
-    monkeypatch.setattr(config, "WAREHOUSE_PATH", warehouse)
-    st.cache_resource.clear()  # never reuse a connection to another test's warehouse
+def run_app(tmp_path: Path, monkeypatch, tables: TableRows = GOLDEN) -> AppTest:
+    monkeypatch.setattr(config, "DATA_DIR", write_tables(tmp_path / "data", tables))
+    st.cache_resource.clear()  # never reuse a connection built from another test's data
     st.cache_data.clear()
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
-    yield at
+    return at
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch) -> AppTest:
+    yield run_app(tmp_path, monkeypatch)
     st.cache_resource.clear()
     st.cache_data.clear()
 
@@ -51,15 +53,22 @@ def test_country_filter_updates_kpis(app):
 def test_fully_refunded_order_is_excluded_from_aov(tmp_path, monkeypatch):
     tables = {table: list(rows) for table, rows in GOLDEN.items()}
     tables["order_items"][1] = (2, 101, 10, 3, "18.00", 3)  # order 101 fully refunded
-    warehouse = tmp_path / "warehouse.duckdb"
-    build_warehouse_file(warehouse, data_dir=write_tables(tmp_path / "data", tables))
-    monkeypatch.setattr(config, "WAREHOUSE_PATH", warehouse)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    at = AppTest.from_file(APP, default_timeout=60)
-    at.run()
+    at = run_app(tmp_path, monkeypatch, tables)
     assert metric_value(at, "Orders") == "3"
     assert metric_value(at, "AOV") == "$45.00"  # (40 + 50) / 2 paid orders
+    st.cache_resource.clear()
+    st.cache_data.clear()
+
+
+def test_stale_warehouse_file_is_ignored(tmp_path, monkeypatch):
+    # A warehouse.duckdb left by an earlier deploy (marts from older SQL) broke the live demo once.
+    stale = tmp_path / "warehouse.duckdb"
+    with duckdb.connect(str(stale)) as con:
+        con.execute("CREATE TABLE mart_cohort_retention AS SELECT '2024-01' AS cohort_month, 1 AS cohort_customers")
+    monkeypatch.setattr(config, "WAREHOUSE_PATH", stale)
+    at = run_app(tmp_path, monkeypatch)
+    assert not at.exception
+    assert metric_value(at, "Net revenue") == "$126"
     st.cache_resource.clear()
     st.cache_data.clear()
 

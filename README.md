@@ -199,7 +199,7 @@ pre-commit install                 # run checks before every commit
 
 ```bash
 python -m retailmetrics.pipeline   # build warehouse.duckdb, outputs/*.csv, reports/*.png
-streamlit run streamlit_app.py     # http://localhost:8501 (builds the warehouse itself if missing)
+streamlit run streamlit_app.py     # http://localhost:8501 (builds an in-memory warehouse from data/ on start)
 python scripts/check.py            # ruff + full test suite
 ```
 

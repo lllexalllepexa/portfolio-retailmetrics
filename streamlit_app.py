@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from retailmetrics import config
-from retailmetrics.pipeline import build_warehouse_file
+from retailmetrics.pipeline import build_warehouse
 
 FILTERS = """
     list_contains($countries, country)
@@ -20,10 +20,14 @@ FILTERS = """
 
 @st.cache_resource
 def get_connection() -> duckdb.DuckDBPyConnection:
-    """Open the warehouse read-only, building it from data/ first if it does not exist yet."""
-    if not config.WAREHOUSE_PATH.exists():
-        build_warehouse_file()
-    return duckdb.connect(str(config.WAREHOUSE_PATH), read_only=True)
+    """Build the warehouse in memory from data/ once per process (about a second).
+
+    A warehouse file left over from an earlier deploy would serve marts built by older SQL, so the
+    dashboard never reads warehouse.duckdb; the pipeline CLI still writes it for ad-hoc queries.
+    """
+    con = duckdb.connect()
+    build_warehouse(con, config.DATA_DIR, config.SQL_DIR)
+    return con
 
 
 def query(sql: str, params: dict | None = None) -> pd.DataFrame:
