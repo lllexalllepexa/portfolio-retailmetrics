@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Generated data and outputs are written with LF; keep them LF on every OS so regeneration is a no-op
+*.csv text eol=lf
+*.png binary

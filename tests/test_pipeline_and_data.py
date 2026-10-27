@@ -11,7 +11,7 @@ import pytest
 
 from retailmetrics import config
 from retailmetrics.io import SCHEMAS, load_tables
-from retailmetrics.models import MART_MODELS
+from retailmetrics.models import DIAGNOSTIC_MODELS, MART_MODELS
 from retailmetrics.pipeline import main as run_pipeline
 from retailmetrics.quality import validate
 from scripts.generate_data import generate, returned_units
@@ -65,7 +65,7 @@ def test_generator_is_deterministic(tmp_path):
 
 
 def test_pipeline_writes_all_marts_and_charts(pipeline_run):
-    for model in MART_MODELS:
+    for model in MART_MODELS + DIAGNOSTIC_MODELS:
         assert not read_output(pipeline_run, model).empty, model
     for chart in CHARTS:
         assert (pipeline_run["reports"] / chart).stat().st_size > 0, chart
@@ -85,6 +85,19 @@ def test_cohort_invariants_on_full_dataset(pipeline_run):
     assert (df.loc[df.month_offset == 0, "retention_rate"] == 1.0).all()
     assert df["retention_rate"].between(0.0, 1.0).all()
     assert (df["active_customers"] <= df["cohort_customers"]).all()
+    assert (df["retention_ci_low"] <= df["retention_rate"]).all()
+    assert (df["retention_rate"] <= df["retention_ci_high"]).all()
+
+
+def test_diagnostics_reconcile_with_marts(pipeline_run):
+    aov = read_output(pipeline_run, "03_country_orders_aov").set_index("country")
+    aov_ci = read_output(pipeline_run, "diagnostics/country_aov_ci").set_index("country")
+    pd.testing.assert_series_equal(aov_ci["aov_usd"], aov.loc[aov_ci.index, "aov_usd"], check_names=False)
+    assert (aov_ci["paid_orders"] == aov.loc[aov_ci.index, "paid_orders"]).all()
+
+    monthly = read_output(pipeline_run, "01_revenue_by_month")
+    activity = read_output(pipeline_run, "diagnostics/monthly_activity")
+    assert activity["orders"].tolist() == monthly["order_count"].tolist()
 
 
 def test_warehouse_exposes_staging_and_marts(pipeline_run):
@@ -109,7 +122,7 @@ def test_committed_data_matches_generator(pipeline_run, table):
     pd.testing.assert_frame_equal(committed, regenerated)
 
 
-@pytest.mark.parametrize("model", MART_MODELS)
+@pytest.mark.parametrize("model", MART_MODELS + DIAGNOSTIC_MODELS)
 def test_committed_outputs_match_pipeline(pipeline_run, model):
     committed = pd.read_csv(config.OUTPUTS_DIR / f"{model}.csv")
     pd.testing.assert_frame_equal(committed, read_output(pipeline_run, model))

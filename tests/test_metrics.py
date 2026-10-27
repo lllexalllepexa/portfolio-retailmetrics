@@ -75,6 +75,46 @@ def test_cohort_anchors_on_first_purchase_with_spine_and_censoring(golden_marts)
     ]
 
 
+def test_cohort_wilson_interval(golden_marts):
+    # n = 1, z = 1.96: k = 1 -> [1 / (1 + z^2), 1]; k = 0 -> [0, z^2 / (1 + z^2)]
+    df = golden_marts["05_cohort_retention"]
+    ones = df[df.retention_rate == 1.0]
+    zeros = df[df.retention_rate == 0.0]
+    assert ones["retention_ci_low"].tolist() == pytest.approx([0.207] * len(ones))
+    assert ones["retention_ci_high"].tolist() == pytest.approx([1.0] * len(ones))
+    assert zeros[["retention_ci_low", "retention_ci_high"]].values.tolist() == [[0.0, 0.793]]
+    assert (df["retention_ci_low"] <= df["retention_rate"]).all()
+    assert (df["retention_rate"] <= df["retention_ci_high"]).all()
+
+
+def test_country_aov_confidence_interval(golden_marts):
+    # US paid orders keep 40.00 and 36.00 net: mean 38, sd = 2 * sqrt(2), half-width = 1.96 * 2 = 3.92
+    df = golden_marts["diagnostics/country_aov_ci"].set_index("country")
+    us = df.loc["US"]
+    assert (us["paid_orders"], us["aov_usd"], us["ci_half_width_usd"]) == (2, 38.0, 3.92)
+    assert (us["ci_low_usd"], us["ci_high_usd"]) == (34.08, 41.92)
+    assert pd.isna(df.loc["DE", "ci_half_width_usd"])  # a single order has no sample variance
+
+
+def test_monthly_activity_decomposes_growth(golden_marts):
+    df = golden_marts["diagnostics/monthly_activity"]
+    assert records(df, ["month", "new_signups", "cumulative_signups", "active_buyers", "orders"]) == [
+        {"month": "2024-01", "new_signups": 2, "cumulative_signups": 2, "active_buyers": 1, "orders": 1},
+        {"month": "2024-02", "new_signups": 0, "cumulative_signups": 2, "active_buyers": 1, "orders": 1},
+        {"month": "2024-03", "new_signups": 0, "cumulative_signups": 2, "active_buyers": 1, "orders": 1},
+    ]
+    assert df["net_revenue_per_order_usd"].tolist() == [40.0, 36.0, 50.0]
+
+
+def test_signup_cohorts_exclude_cancelled_orders(golden_marts):
+    df = golden_marts["diagnostics/signup_cohorts"]
+    # both customers sign up in Jan; 3 non-cancelled orders / 2 customers; window ends 2024-03-15
+    assert records(df, ["signup_month", "customers", "non_cancelled_orders_per_customer"]) == [
+        {"signup_month": "2024-01", "customers": 2, "non_cancelled_orders_per_customer": 1.5},
+    ]
+    assert df["avg_days_left"].item() == 63.0  # (70 + 55) / 2 = 62.5; DuckDB rounds half away from zero
+
+
 def test_staging_measures_reconcile(load_fixture, golden_tables):
     from retailmetrics.models import build_staging
 

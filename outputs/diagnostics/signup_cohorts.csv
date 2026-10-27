@@ -1,0 +1,5 @@
+signup_month,customers,avg_days_left,non_cancelled_orders_per_customer
+2024-01,295,165.0,1.94
+2024-02,288,136.0,1.78
+2024-03,324,106.0,1.69
+2024-04,293,76.0,1.84

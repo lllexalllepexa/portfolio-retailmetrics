@@ -22,9 +22,21 @@ MART_MODELS: tuple[str, ...] = (
     "05_cohort_retention",
 )
 
+# Queries behind the README "Diagnosing Synthetic Artifacts" section; exported next to the marts.
+DIAGNOSTIC_MODELS: tuple[str, ...] = (
+    "diagnostics/country_aov_ci",
+    "diagnostics/monthly_activity",
+    "diagnostics/signup_cohorts",
+)
+
 
 def mart_table_name(model: str) -> str:
-    """'01_revenue_by_month' -> 'mart_revenue_by_month' (identifiers cannot start with a digit)."""
+    """'01_revenue_by_month' -> 'mart_revenue_by_month' (identifiers cannot start with a digit).
+
+    'diagnostics/monthly_activity' -> 'diag_monthly_activity'.
+    """
+    if model.startswith("diagnostics/"):
+        return "diag_" + model.split("/", 1)[1]
     return "mart_" + model.split("_", 1)[1]
 
 
@@ -39,9 +51,9 @@ def build_staging(con: duckdb.DuckDBPyConnection, sql_dir: Path = SQL_DIR) -> No
 
 
 def build_marts(con: duckdb.DuckDBPyConnection, sql_dir: Path = SQL_DIR) -> dict[str, pd.DataFrame]:
-    """Materialize each mart as a table and return its contents keyed by model name."""
+    """Materialize each mart and diagnostic as a table and return its contents keyed by model name."""
     results: dict[str, pd.DataFrame] = {}
-    for model in MART_MODELS:
+    for model in MART_MODELS + DIAGNOSTIC_MODELS:
         table = mart_table_name(model)
         con.execute(f"CREATE OR REPLACE TABLE {table} AS\n{read_model_sql(model, sql_dir)}")
         results[model] = con.execute(f"SELECT * FROM {table}").df()

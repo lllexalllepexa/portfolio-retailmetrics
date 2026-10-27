@@ -62,30 +62,52 @@ def render_sidebar() -> tuple[tuple[str, ...], tuple[str, ...], date, date]:
     return tuple(sel_countries), tuple(sel_categories), start, end
 
 
+def usd(value: float) -> str:
+    """Compact dollar amount that fits a KPI tile: $126, $402.1K, $1.45M."""
+    if abs(value) >= 1_000_000:
+        return f"${value / 1_000_000:,.2f}M"
+    if abs(value) >= 1_000:
+        return f"${value / 1_000:,.1f}K"
+    return f"${value:,.0f}"
+
+
 def render_kpis(selection: tuple) -> None:
     kpi = filtered(
         """
+        WITH per_order AS (
+            SELECT order_id, customer_id,
+                   sum(net_revenue)      AS net_revenue,
+                   sum(gross_revenue)    AS gross_revenue,
+                   sum(returned_revenue) AS returned_revenue
+            FROM fct_order_lines
+            WHERE {filters}
+            GROUP BY 1, 2
+        )
         SELECT
-            sum(net_revenue)                                   AS net_revenue,
-            sum(gross_revenue)                                 AS gross_revenue,
+            sum(net_revenue)                                      AS net_revenue,
+            sum(gross_revenue)                                    AS gross_revenue,
             sum(returned_revenue) / nullif(sum(gross_revenue), 0) AS return_rate,
-            count(DISTINCT order_id)                           AS orders,
-            count(DISTINCT customer_id)                        AS customers
-        FROM fct_order_lines
-        WHERE {filters}
+            count(*)                                              AS orders,
+            count(*) FILTER (WHERE net_revenue > 0)               AS paid_orders,
+            count(DISTINCT customer_id)                           AS customers
+        FROM per_order
         """,
         *selection,
     ).to_dict("records")[0]  # records keep per-column dtypes; .iloc[0] would upcast ints to float
     if not kpi["orders"]:
         st.info("No qualifying orders match the current filters.")
         st.stop()
-    aov = kpi["net_revenue"] / kpi["orders"]
+    aov = kpi["net_revenue"] / kpi["paid_orders"] if kpi["paid_orders"] else 0.0
     cols = st.columns(5)
-    cols[0].metric("Net revenue", f"${kpi['net_revenue']:,.0f}")
-    cols[1].metric("Gross revenue", f"${kpi['gross_revenue']:,.0f}")
-    cols[2].metric("Return rate", f"{kpi['return_rate']:.1%}")
+    cols[0].metric("Net revenue", usd(kpi["net_revenue"]), help=f"${kpi['net_revenue']:,.2f} after returns.")
+    cols[1].metric("Gross revenue", usd(kpi["gross_revenue"]), help=f"${kpi['gross_revenue']:,.2f} before returns.")
+    cols[2].metric("Return rate", f"{kpi['return_rate']:.1%}", help="Returned revenue / gross revenue.")
     cols[3].metric("Orders", f"{kpi['orders']:,}", help="Completed + returned orders; cancelled orders are excluded.")
-    cols[4].metric("Net revenue per order", f"${aov:,.2f}", help="Net revenue / orders in the current selection.")
+    cols[4].metric(
+        "AOV",
+        f"${aov:,.2f}",
+        help="Net revenue / paid orders (fully refunded orders excluded), the same definition as the marts.",
+    )
     st.caption(f"{kpi['customers']:,} purchasing customers in selection")
 
 
@@ -114,7 +136,7 @@ def render_trends(selection: tuple) -> None:
             """,
             *selection,
         )
-        st.bar_chart(by_category, x="category", y="Net revenue", horizontal=True, x_label="USD")
+        st.bar_chart(by_category, x="category", y="Net revenue", horizontal=True, sort="-Net revenue", x_label="USD")
 
 
 def render_breakdowns(selection: tuple) -> None:
@@ -142,6 +164,9 @@ def render_breakdowns(selection: tuple) -> None:
             hide_index=True,
             width="stretch",
             column_config={
+                "country": st.column_config.TextColumn("Country"),
+                "orders": st.column_config.NumberColumn("Orders"),
+                "paid_orders": st.column_config.NumberColumn("Paid orders"),
                 "net_revenue": st.column_config.NumberColumn("Net revenue", format="dollar"),
                 "aov": st.column_config.NumberColumn("AOV (paid orders)", format="dollar"),
             },
@@ -150,34 +175,53 @@ def render_breakdowns(selection: tuple) -> None:
         st.subheader("Top 10 products")
         products = filtered(
             """
-            SELECT product_name AS product, category,
+            SELECT product_id, product_name AS product, category,
                    sum(net_revenue) AS net_revenue,
                    sum(returned_revenue) / nullif(sum(gross_revenue), 0) AS return_rate
             FROM fct_order_lines WHERE {filters}
-            GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10
+            GROUP BY 1, 2, 3 ORDER BY 4 DESC, 1 LIMIT 10
             """,
             *selection,
         )
         st.dataframe(
             products,
             hide_index=True,
+            column_order=["product", "category", "net_revenue", "return_rate"],
             width="stretch",
             column_config={
+                "product": st.column_config.TextColumn("Product"),
+                "category": st.column_config.TextColumn("Category"),
                 "net_revenue": st.column_config.NumberColumn("Net revenue", format="dollar"),
                 "return_rate": st.column_config.NumberColumn("Return rate", format="percent"),
             },
         )
 
 
+def cohort_tables(cohorts: pd.DataFrame, show_ci: bool) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pivot the cohort mart into (numeric rates, display labels); censored cells stay NaN in both."""
+    labels = [
+        f"{rate:.1%} ({low:.0%}–{high:.0%})" if show_ci else f"{rate:.1%}"
+        for rate, low, high in cohorts[["retention_rate", "retention_ci_low", "retention_ci_high"]].values
+    ]
+    sizes = cohorts.groupby("cohort_month")["cohort_customers"].first()
+    tables = []
+    for values in ("retention_rate", "label"):
+        pivot = cohorts.assign(label=labels).pivot(index="cohort_month", columns="month_offset", values=values)
+        pivot.columns = [f"Month {m}" for m in pivot.columns]
+        pivot.index = [f"{c} (n={sizes[c]})" for c in pivot.index]
+        tables.append(pivot)
+    return tables[0], tables[1]
+
+
 def render_cohorts() -> None:
     st.subheader("First-purchase cohort retention")
-    cohorts = query("SELECT * FROM mart_cohort_retention")
-    pivot = cohorts.pivot(index="cohort_month", columns="month_offset", values="retention_rate")
-    pivot.columns = [f"Month {m}" for m in pivot.columns]
-    sizes = cohorts.groupby("cohort_month")["cohort_customers"].first()
-    pivot.index = [f"{c} (n={sizes[c]})" for c in pivot.index]
+    show_ci = st.toggle("Show 95% confidence intervals", help="Wilson score interval for each cell.")
+    rates, labels = cohort_tables(query("SELECT * FROM mart_cohort_retention"), show_ci)
     st.dataframe(
-        pivot.style.format("{:.1%}", na_rep="").background_gradient(cmap="YlGnBu", vmin=0.0, vmax=1.0),
+        labels.style.background_gradient(cmap="YlGnBu", vmin=0.0, vmax=1.0, gmap=rates, axis=None).highlight_null(
+            props="background-color: transparent;"
+        ),
+        placeholder="",
         width="stretch",
     )
     st.caption(
@@ -185,6 +229,18 @@ def render_cohorts() -> None:
         "Blank cells are not yet observable (after the last month of data). "
         "See the README section 'Diagnosing Synthetic Artifacts' before reading trends into this table."
     )
+
+
+def render_reading_notes() -> None:
+    with st.expander("How to read these numbers (synthetic data)"):
+        st.markdown(
+            "- **Growth is volume, not value.** Net revenue per order stays flat while orders grow with the "
+            "signed-up customer base; signups stop after April, so May–June plateau.\n"
+            "- **Country AOV gaps are noise.** 95% confidence intervals overlap for every pair of countries.\n"
+            "- **April–May cohorts look stickier** because the generator packs the same number of orders into "
+            "fewer remaining months, not because of customer behaviour.\n\n"
+            "Details and the queries behind each claim: README, section *Diagnosing Synthetic Artifacts*."
+        )
 
 
 def main() -> None:
@@ -204,6 +260,7 @@ def main() -> None:
         st.stop()
 
     render_kpis(selection)
+    render_reading_notes()
     render_trends(selection)
     render_breakdowns(selection)
     render_cohorts()

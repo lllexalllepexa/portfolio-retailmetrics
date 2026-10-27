@@ -38,21 +38,39 @@ def render_revenue_by_category(df: pd.DataFrame, path: Path, dpi: int = 150) -> 
     return _save(fig, path, dpi)
 
 
+def cohort_cell_label(rate: float, low: float, high: float) -> str:
+    """'0.259, 0.161, 0.389' -> '25.9%\\n16–39%' (rate over its 95% interval)."""
+    return f"{rate:.1%}\n{low:.0%}–{high:.0%}"
+
+
 def render_cohort_heatmap(df: pd.DataFrame, path: Path, dpi: int = 150, palette: str = "YlGnBu") -> Path:
-    """Heatmap of first-purchase cohort retention. Right-censored cells are left blank."""
-    required = {"cohort_month", "cohort_customers", "month_offset", "retention_rate"}
+    """Heatmap of first-purchase cohort retention with 95% intervals. Right-censored cells are left blank."""
+    required = {
+        "cohort_month",
+        "cohort_customers",
+        "month_offset",
+        "retention_rate",
+        "retention_ci_low",
+        "retention_ci_high",
+    }
     if missing := required - set(df.columns):
         raise ValueError(f"Cohort data is missing required columns: {sorted(missing)}")
 
     pivot = df.pivot(index="cohort_month", columns="month_offset", values="retention_rate")
+    labels = df.assign(
+        label=[
+            cohort_cell_label(*row) for row in df[["retention_rate", "retention_ci_low", "retention_ci_high"]].values
+        ]
+    ).pivot(index="cohort_month", columns="month_offset", values="label")
     sizes = df.groupby("cohort_month")["cohort_customers"].first()
 
     with sns.axes_style("white"):
         fig, ax = plt.subplots(figsize=(9.5, 5.5))
         sns.heatmap(
             pivot,
-            annot=True,
-            fmt=".1%",
+            annot=labels.fillna(""),
+            fmt="",
+            annot_kws={"fontsize": 9},
             cmap=palette,
             vmin=0.0,
             vmax=1.0,
@@ -65,7 +83,8 @@ def render_cohort_heatmap(df: pd.DataFrame, path: Path, dpi: int = 150, palette:
         )
     fig.suptitle("First-purchase cohort retention", fontsize=15, fontweight="bold")
     ax.set_title(
-        "Share of each cohort placing >= 1 qualifying order N months after the first; blank = not yet observable",
+        "Share of each cohort placing >= 1 qualifying order N months after the first, with 95% interval; "
+        "blank = not yet observable",
         fontsize=9.5,
         color="#4a5568",
     )

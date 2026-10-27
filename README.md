@@ -1,13 +1,15 @@
 # Retail Metrics & Customer Cohort Analytics
 
-> A small, end-to-end analytics engineering project: raw CSVs → schema-enforced DuckDB load → data quality gates → a staging fact model → five SQL marts → charts and an interactive Streamlit dashboard, with golden-fixture tests and CI.
+> A small, end-to-end analytics engineering project: raw CSVs → schema-enforced DuckDB load → data quality gates → a staging fact model → five SQL marts → charts and an interactive Streamlit dashboard, with golden-fixture tests and a one-command check.
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-Live_Demo-FF4B4B?logo=streamlit&logoColor=white)](https://lllexalllepexa-test1.streamlit.app/)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.5-FFF000?logo=duckdb&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-**[Русская версия (README.ru.md)](README.ru.md)** · **[Live dashboard](https://lllexalllepexa-test1.streamlit.app/)**
+**[Русская версия (README.ru.md)](README.ru.md)** · **[Live dashboard](https://lllexalllepexa-test1.streamlit.app/)** (sleeps when idle; the first load can take about a minute)
+
+![Dashboard: KPIs, monthly and category revenue, country mix, top products, cohort retention](reports/dashboard.png)
 
 > [!IMPORTANT]
 > **All data is synthetic.** It is produced by [`scripts/generate_data.py`](scripts/generate_data.py) (seed 42) from deliberately simple distributions. The numbers below demonstrate the pipeline and the metric definitions; they are not findings about real customers. Several apparent trends are artifacts of the generator — see [Diagnosing Synthetic Artifacts](#diagnosing-synthetic-artifacts).
@@ -30,10 +32,10 @@ The scenario is a B2C e-commerce store selling in five markets (US, GB, DE, FR, 
 | Totals (H1 2024) | **$1,448,429.39 net revenue** from $1,546,683.95 gross (6.35% returned by value); 2,171 qualifying orders from 1,027 purchasing customers; 116 cancelled orders excluded | — |
 | Growth | Net revenue rises from $34.1K (Jan, 60 orders) to $402.1K (Jun, 582 orders), ~11.8x | [Artifact 1](#1-growth-is-a-cumulative-customer-base-not-momentum) |
 | Category mix | Books ($362.2K) and Sports ($321.7K) are 47.2% of net revenue; return rates range 5.2% (Apparel) – 7.2% (Books) | Products are assigned uniformly at random, so ranking reflects price draws |
-| Markets | AOV (net revenue / paid orders): FR $726, PL $718, GB $709, US $690, DE $684 — **all 95% CIs overlap** (±$30–67) | [Artifact 3](#3-country-aov-differences-are-noise) |
-| Retention | Month 1 retention: Jan cohort 25.9%, Feb 31.5%, Mar 28.6%, **Apr 40.8%**, May 39.7% | [Artifact 2](#2-later-cohorts-look-stickier-because-their-orders-are-compressed) |
+| Markets | AOV (net revenue / paid orders): FR $726, PL $718, GB $709, US $690, DE $684 — **all 95% CIs overlap** (±$30–67, [`country_aov_ci.csv`](outputs/diagnostics/country_aov_ci.csv)) | [Artifact 3](#3-country-aov-differences-are-noise) |
+| Retention | Month 1 retention: Jan cohort 25.9% (95% CI 16–39%, n = 54), Feb 31.5%, Mar 28.6%, **Apr 40.8% (35–47%)**, May 39.7% | [Artifact 2](#2-later-cohorts-look-stickier-because-their-orders-are-compressed) |
 
-Exact figures live in [`outputs/`](outputs/); the test suite regenerates them from scratch and fails if they differ from the committed files.
+Exact figures live in [`outputs/`](outputs/), and every number in this README, including the diagnostics below, comes from a committed query. The test suite regenerates all outputs from scratch and fails if they differ from the committed files.
 
 ### Charts
 
@@ -53,6 +55,8 @@ A dashboard will happily display any pattern in its input. Before attributing a 
 
 ### 1. Growth is a cumulative customer base, not momentum
 
+Source: [`sql/diagnostics/monthly_activity.sql`](sql/diagnostics/monthly_activity.sql) → [`outputs/diagnostics/monthly_activity.csv`](outputs/diagnostics/monthly_activity.csv)
+
 | Month | New signups | Cumulative signups | Active buyers | Orders | Net revenue / order |
 |---|---:|---:|---:|---:|---:|
 | 2024-01 | 295 | 295 | 54 | 60 | $568 |
@@ -66,22 +70,22 @@ Revenue per order is flat; the entire increase is order volume, and volume track
 
 ### 2. Later cohorts look stickier because their orders are compressed
 
-Every customer gets the same order-count distribution regardless of how much of the window remains:
+Every customer gets the same order-count distribution regardless of how much of the window remains ([`sql/diagnostics/signup_cohorts.sql`](sql/diagnostics/signup_cohorts.sql)):
 
 | Signup month | Customers | Avg. days left until Jun 30 | Non-cancelled orders / customer |
 |---|---:|---:|---:|
 | 2024-01 | 295 | 165 | 1.94 |
-| 2024-02 | 288 | 137 | 1.78 |
+| 2024-02 | 288 | 136 | 1.78 |
 | 2024-03 | 324 | 106 | 1.69 |
 | 2024-04 | 293 | 76 | 1.84 |
 
-An April signup places ~1.8 orders inside ~2.5 months; a January signup spreads the same ~1.8 orders over ~5.5 months. Packing an equal number of orders into fewer months mechanically raises the share of customers active in any given month — which is exactly what the Apr (40.8%) and May (39.7%) Month 1 cells show. The same mechanism explains why the January first-purchase cohort is small (n = 54): most January signups' first order lands in a later month.
+An April signup places ~1.8 orders inside ~2.5 months; a January signup spreads the same ~1.8 orders over ~5.5 months. Packing an equal number of orders into fewer months mechanically raises the share of customers active in any given month — which is exactly what the Apr (40.8%) and May (39.7%) Month 1 cells show. The January cell is also the least certain: with n = 54 its 95% interval spans 16–39%. The same mechanism explains why the January first-purchase cohort is small (n = 54): most January signups' first order lands in a later month.
 
 In real data, an uplift like this would justify a look at acquisition channels or onboarding changes. Here the correct conclusion is "no behavioral signal".
 
 ### 3. Country AOV differences are noise
 
-Country is assigned independently of basket contents, so any AOV gap must be sampling noise. The data agrees: with n = 201–924 paid orders per country, 95% confidence intervals of ±$30–67 overlap for every pair of countries. Reporting "FR has the highest AOV" would be over-reading.
+Country is assigned independently of basket contents, so any AOV gap must be sampling noise. The data agrees: with n = 201–924 paid orders per country, 95% confidence intervals of ±$30–67 overlap for every pair of countries ([`sql/diagnostics/country_aov_ci.sql`](sql/diagnostics/country_aov_ci.sql)). Reporting "FR has the highest AOV" would be over-reading.
 
 ### What a more realistic generator would need
 
@@ -102,7 +106,7 @@ flowchart LR
     end
     subgraph Model["DuckDB warehouse"]
         S["staging/fct_order_lines<br/>(view, all measures defined once)"]
-        M["5 marts: mart_*<br/>(tables)"]
+        M["5 marts: mart_*<br/>+ 3 diagnostics: diag_*<br/>(tables)"]
     end
     subgraph Serve["Serving"]
         CSV["outputs/*.csv"]
@@ -127,7 +131,10 @@ flowchart LR
 | [`02_revenue_by_category`](sql/02_revenue_by_category.sql) | Category | `gross_revenue_usd`, `net_revenue_usd`, `return_rate`, `units_sold_net` (BIGINT) |
 | [`03_country_orders_aov`](sql/03_country_orders_aov.sql) | Country | `orders`, `paid_orders`, `net_revenue_usd`, `aov_usd` |
 | [`04_top_products`](sql/04_top_products.sql) | Product (top 15) | `net_revenue_usd`, `return_rate`, `units_sold_net` |
-| [`05_cohort_retention`](sql/05_cohort_retention.sql) | Cohort × month offset 0–3 | `cohort_customers`, `active_customers`, `retention_rate` |
+| [`05_cohort_retention`](sql/05_cohort_retention.sql) | Cohort × month offset 0–3 | `cohort_customers`, `active_customers`, `retention_rate`, `retention_ci_low`, `retention_ci_high` |
+| [`diagnostics/country_aov_ci`](sql/diagnostics/country_aov_ci.sql) | Country | `paid_orders`, `aov_usd`, `ci_low_usd`, `ci_high_usd` |
+| [`diagnostics/monthly_activity`](sql/diagnostics/monthly_activity.sql) | Month | `new_signups`, `cumulative_signups`, `active_buyers`, `orders`, `net_revenue_per_order_usd` |
+| [`diagnostics/signup_cohorts`](sql/diagnostics/signup_cohorts.sql) | Signup month | `customers`, `avg_days_left`, `non_cancelled_orders_per_customer` |
 
 The queries use DuckDB-specific functions (`strftime`, `date_trunc`, `date_diff`, `range`, `to_months`, `FILTER`, `ANTI JOIN`).
 
@@ -142,9 +149,9 @@ The queries use DuckDB-specific functions (`strftime`, `date_trunc`, `date_diff`
 | Discount amount | Σ quantity × (list price − unit price paid) |
 | Orders | Count of qualifying orders, including fully returned ones |
 | Paid orders | Qualifying orders with net revenue > 0 |
-| AOV | Net revenue / paid orders (fully refunded orders do not dilute it) |
-| Cohort month | Calendar month of the customer's **first qualifying order** |
-| Retention rate (c, n) | Share of cohort c with ≥ 1 qualifying order in month c + n. Month 0 = 100% by definition. Zero-activity cells are reported as 0%; cells after the last month of data are right-censored and omitted. |
+| AOV | Net revenue / paid orders (fully refunded orders do not dilute it). The dashboard KPI uses the same definition. |
+| Cohort month | Calendar month of the customer's **first qualifying order**. A fully refunded order still counts as a purchase: 44 of 1,027 customers (4.3%) are anchored on one. Anchoring on the first order with net revenue > 0 is the stricter alternative. |
+| Retention rate (c, n) | Share of cohort c with ≥ 1 qualifying order in month c + n. Month 0 = 100% by definition. Zero-activity cells are reported as 0%; cells after the last month of data are right-censored and omitted. Each cell carries a 95% Wilson score interval. |
 
 > "GMV" is intentionally not used: it conventionally means gross value before returns, while most marts here report net revenue.
 
@@ -160,20 +167,20 @@ The last rule caught a real bug in the original generator (returned orders with 
 
 ## Testing
 
-One command runs everything a CI server would — Ruff lint, Ruff format check and the full pytest suite:
+One command runs Ruff lint, the Ruff format check and the full pytest suite:
 
 ```bash
 python scripts/check.py
 ```
 
-The same script runs automatically before every commit through a [pre-commit](https://pre-commit.com/) hook (`pre-commit install` once after setup). A GitHub Actions workflow is included in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) as a manual (`workflow_dispatch`) job; it calls the same script.
+The same script runs automatically before every commit through a [pre-commit](https://pre-commit.com/) hook (`pre-commit install` once after setup). Hosted CI is not available for this GitHub account, so the workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is manual-only (`workflow_dispatch`) and calls the same script.
 
 | Suite | What it proves |
 |---|---|
-| [`tests/test_metrics.py`](tests/test_metrics.py) | Exact metric values on a hand-computed golden fixture (2 customers, 4 orders incl. a partial return and a cancellation): net vs. gross revenue, cancelled exclusion, integer unit counts, AOV denominator, first-purchase cohort anchoring, Month 0 = 1.0, zero-cell spine, censoring |
+| [`tests/test_metrics.py`](tests/test_metrics.py) | Exact metric values on a hand-computed golden fixture (2 customers, 4 orders incl. a partial return and a cancellation): net vs. gross revenue, cancelled exclusion, integer unit counts, AOV denominator, first-purchase cohort anchoring, Month 0 = 1.0, zero-cell spine, censoring, Wilson intervals, the diagnostic queries |
 | [`tests/test_quality.py`](tests/test_quality.py) | Each data quality gate fires on an injected defect; schema mismatches and missing files are rejected |
-| [`tests/test_pipeline_and_data.py`](tests/test_pipeline_and_data.py) | Generator determinism and return logic; full pipeline run; net revenue reconciles across marts; committed `data/` and `outputs/` equal a fresh regeneration |
-| [`tests/test_streamlit_app.py`](tests/test_streamlit_app.py) | Dashboard renders and KPIs respond to the country filter |
+| [`tests/test_pipeline_and_data.py`](tests/test_pipeline_and_data.py) | Generator determinism and return logic; full pipeline run; net revenue reconciles across marts; diagnostics reconcile with marts; committed `data/` and `outputs/` equal a fresh regeneration |
+| [`tests/test_streamlit_app.py`](tests/test_streamlit_app.py) | Dashboard renders; KPIs respond to the country filter; AOV excludes fully refunded orders; censored cohort cells stay empty |
 
 All tests write only to pytest temporary directories, so they never modify the working tree and can run in any order.
 
@@ -208,8 +215,8 @@ python -m retailmetrics.pipeline
 ```text
 portfolio-retailmetrics/
 ├── data/                         # Raw synthetic CSVs (committed, reproducible)
-├── outputs/                      # Mart exports (committed, checked against regeneration by tests)
-├── reports/                      # Charts used in this README
+├── outputs/                      # Mart exports + diagnostics/ (committed, checked against regeneration by tests)
+├── reports/                      # Charts and the dashboard screenshot used in this README
 ├── retailmetrics/                # Pipeline package
 │   ├── config.py                 #   repository paths
 │   ├── io.py                     #   schema-enforced CSV loading
@@ -222,6 +229,7 @@ portfolio-retailmetrics/
 │   └── check.py                  # Lint + tests (local CI, used by pre-commit)
 ├── sql/
 │   ├── staging/fct_order_lines.sql
+│   ├── diagnostics/              # Queries behind "Diagnosing Synthetic Artifacts"
 │   └── 01_… – 05_….sql           # Marts
 ├── tests/                        # Golden fixtures, quality, end-to-end, dashboard
 ├── streamlit_app.py              # Dashboard

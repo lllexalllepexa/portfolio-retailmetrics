@@ -45,10 +45,11 @@ def build_warehouse_file(
 
 
 def export_outputs(results: dict[str, pd.DataFrame], out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
     for model, df in results.items():
-        df.to_csv(out_dir / f"{model}.csv", index=False, lineterminator="\n")
-    log.info("Wrote %d mart CSVs -> %s", len(results), out_dir)
+        path = out_dir / f"{model}.csv"  # diagnostics land in out_dir/diagnostics/
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, index=False, lineterminator="\n")
+    log.info("Wrote %d CSVs -> %s", len(results), out_dir)
 
 
 def render_reports(results: dict[str, pd.DataFrame], reports_dir: Path) -> None:

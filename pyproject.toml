@@ -21,7 +21,6 @@ addopts = "-ra --strict-markers"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["src", "scripts/plot_cohort_heatmap.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
